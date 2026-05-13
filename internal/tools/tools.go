@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/gjolly/fleetmind/internal/exectool"
+	"github.com/gjolly/fleetmind/internal/fleet"
 	"github.com/gjolly/fleetmind/internal/procfs"
 	"github.com/gjolly/fleetmind/internal/sysfs"
 )
@@ -22,6 +23,34 @@ type Deps struct {
 	ProcFS procfs.Root
 	SysFS  sysfs.Root
 	Logger *slog.Logger
+	// Fleet is the local fleet registry. Nil when fleet mode is disabled —
+	// list_fleet is still registered but reports an empty roster.
+	Fleet *fleet.Registry
+}
+
+// AllToolNames lists every MCP tool name RegisterAll attaches. Kept in sync
+// with the register* calls below; published to fleet peers as part of the
+// local node's identity.
+var AllToolNames = []string{
+	"system_info",
+	"cpu_info",
+	"memory_info",
+	"load_info",
+	"list_processes",
+	"get_process",
+	"list_block_devices",
+	"list_mounts",
+	"list_network_interfaces",
+	"list_sockets",
+	"list_pci_devices",
+	"list_usb_devices",
+	"kernel_info",
+	"list_kernel_modules",
+	"list_dmi",
+	"list_sensors",
+	"read_journal",
+	"read_dmesg",
+	"list_fleet",
 }
 
 // RegisterAll attaches every tool to s.
@@ -39,6 +68,7 @@ func RegisterAll(s *mcp.Server, d Deps) {
 	registerKernel(s, d)
 	registerHardware(s, d)
 	registerLogs(s, d)
+	registerFleet(s, d)
 }
 
 // textResult builds an MCP CallToolResult with a single textual summary line.

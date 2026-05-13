@@ -27,3 +27,30 @@ case "$BIND" in
         exit 1
         ;;
 esac
+
+FLEET="$(snapctl get fleet)"
+case "$FLEET" in
+    ''|0|1|true|false|yes|no|on|off) ;;
+    *)
+        echo "fleetmind: fleet must be one of 0/1/true/false/yes/no/on/off, got '$FLEET'" >&2
+        exit 1
+        ;;
+esac
+
+JOIN_URL="$(snapctl get join-url)"
+case "$JOIN_URL" in
+    ''|http://*|https://*) ;;
+    *)
+        echo "fleetmind: join-url must be http:// or https://, got '$JOIN_URL'" >&2
+        exit 1
+        ;;
+esac
+
+ADVERTISE_URL="$(snapctl get advertise-url)"
+case "$ADVERTISE_URL" in
+    ''|http://*|https://*) ;;
+    *)
+        echo "fleetmind: advertise-url must be http:// or https://, got '$ADVERTISE_URL'" >&2
+        exit 1
+        ;;
+esac

@@ -1,6 +1,7 @@
 // Package mcpserver assembles the FleetMind MCP server: token bootstrap,
 // bearer-token middleware and tool registration over a Streamable HTTP
-// transport.
+// transport. Optional fleet mode (peer discovery + heartbeat SSE) is wired
+// onto the same listener.
 package mcpserver
 
 import (
@@ -10,11 +11,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/gjolly/fleetmind/internal/exectool"
+	"github.com/gjolly/fleetmind/internal/fleet"
 	"github.com/gjolly/fleetmind/internal/procfs"
 	"github.com/gjolly/fleetmind/internal/sysfs"
 	"github.com/gjolly/fleetmind/internal/tools"
@@ -30,18 +33,33 @@ type Config struct {
 	Token    string
 	Version  string
 	Logger   *slog.Logger
+
+	// Fleet, when non-nil, enables fleet mode: the server hosts /fleet/* and
+	// the Manager joins/maintains the peer mesh while Serve is running.
+	Fleet *FleetConfig
 }
 
-// Server bundles the MCP server and its HTTP listener.
+// FleetConfig configures optional fleet membership. BootstrapURL may be empty
+// to start a solo fleet. AdvertiseURL is the URL other peers will dial back to
+// reach this node and must be reachable from them.
+type FleetConfig struct {
+	BootstrapURL string
+	AdvertiseURL string
+}
+
+// Server bundles the MCP server, its HTTP listener and (optionally) a fleet
+// manager.
 type Server struct {
-	cfg    Config
-	mcp    *mcp.Server
-	http   *http.Server
-	logger *slog.Logger
+	cfg      Config
+	mcp      *mcp.Server
+	http     *http.Server
+	logger   *slog.Logger
+	fleetReg *fleet.Registry
+	fleetMgr *fleet.Manager
 }
 
 // New builds an MCP server with all FleetMind tools registered.
-func New(cfg Config) *Server {
+func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -51,14 +69,28 @@ func New(cfg Config) *Server {
 	}, &mcp.ServerOptions{
 		Instructions: "Read-only Linux system observability. Tools cover hardware, " +
 			"kernel, processes, mounts, network, sensors and journal logs. Nothing here " +
-			"can mutate the host: the snap is strictly confined to *-observe interfaces.",
+			"can mutate the host: the snap is strictly confined to *-observe interfaces. " +
+			"In fleet mode, list_fleet reports every peer MCP server in the mesh.",
 	})
+
+	var (
+		fleetReg *fleet.Registry
+		fleetMgr *fleet.Manager
+	)
+	if cfg.Fleet != nil {
+		reg, mgr, err := buildFleet(*cfg.Fleet, cfg.Token, cfg.Version, cfg.Logger)
+		if err != nil {
+			return nil, fmt.Errorf("fleet init: %w", err)
+		}
+		fleetReg, fleetMgr = reg, mgr
+	}
 
 	deps := tools.Deps{
 		Exec:   exectool.NewRunner(),
 		ProcFS: procfs.Default,
 		SysFS:  sysfs.Default,
 		Logger: cfg.Logger,
+		Fleet:  fleetReg,
 	}
 	tools.RegisterAll(mcpSrv, deps)
 
@@ -74,6 +106,9 @@ func New(cfg Config) *Server {
 	)
 	mux.Handle("/mcp", bearerAuth(streamable, cfg.Token, cfg.Logger))
 	mux.Handle("/mcp/", bearerAuth(streamable, cfg.Token, cfg.Logger))
+	if fleetReg != nil {
+		mux.Handle("/fleet/", bearerAuth(fleet.Handler(fleetReg), cfg.Token, cfg.Logger))
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
@@ -101,7 +136,39 @@ func New(cfg Config) *Server {
 		ErrorLog:          slog.NewLogLogger(cfg.Logger.Handler(), slog.LevelWarn),
 	}
 
-	return &Server{cfg: cfg, mcp: mcpSrv, http: httpSrv, logger: cfg.Logger}
+	return &Server{
+		cfg:      cfg,
+		mcp:      mcpSrv,
+		http:     httpSrv,
+		logger:   cfg.Logger,
+		fleetReg: fleetReg,
+		fleetMgr: fleetMgr,
+	}, nil
+}
+
+func buildFleet(fc FleetConfig, token, version string, log *slog.Logger) (*fleet.Registry, *fleet.Manager, error) {
+	if fc.AdvertiseURL == "" {
+		return nil, nil, errors.New("advertise URL is required in fleet mode")
+	}
+	nodeID, err := fleet.NewNodeID()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate node id: %w", err)
+	}
+	now := time.Now().UTC()
+	self := fleet.Peer{
+		NodeID:        nodeID,
+		AdvertiseURL:  fc.AdvertiseURL,
+		Version:       version,
+		Tools:         append([]string(nil), tools.AllToolNames...),
+		JoinedAt:      now,
+		LastHeartbeat: now,
+	}
+	reg := fleet.NewRegistry(self, log)
+	mgr := fleet.NewManager(reg, fleet.ManagerOptions{
+		BootstrapURL: fc.BootstrapURL,
+		Token:        token,
+	}, log)
+	return reg, mgr, nil
 }
 
 // Addr returns the resolved listen address. Only meaningful after Serve has
@@ -109,11 +176,13 @@ func New(cfg Config) *Server {
 func (s *Server) Addr() string { return s.http.Addr }
 
 // Serve binds the listener and blocks until ctx is cancelled. The HTTP server
-// is shut down gracefully with a 5-second grace period.
+// is shut down gracefully with a 5-second grace period. When fleet mode is
+// enabled, the manager runs for the full Serve lifetime.
 func (s *Server) Serve(ctx context.Context) error {
 	listenErr := make(chan error, 1)
 	go func() {
-		s.logger.Info("listening", "addr", s.http.Addr, "endpoint", "/mcp")
+		s.logger.Info("listening", "addr", s.http.Addr, "endpoint", "/mcp",
+			"fleet", s.fleetMgr != nil)
 		var err error
 		if s.cfg.Listener != nil {
 			err = s.http.Serve(s.cfg.Listener)
@@ -127,6 +196,20 @@ func (s *Server) Serve(ctx context.Context) error {
 		listenErr <- nil
 	}()
 
+	var (
+		mgrCtx    context.Context
+		mgrCancel context.CancelFunc
+		mgrWg     sync.WaitGroup
+	)
+	if s.fleetMgr != nil {
+		mgrCtx, mgrCancel = context.WithCancel(ctx)
+		mgrWg.Add(1)
+		go func() {
+			defer mgrWg.Done()
+			s.fleetMgr.Run(mgrCtx)
+		}()
+	}
+
 	select {
 	case <-ctx.Done():
 		// Deliberately decouple shutdown from the cancelled parent ctx so we
@@ -134,10 +217,22 @@ func (s *Server) Serve(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck // fresh ctx is intentional for graceful drain
+			if mgrCancel != nil {
+				mgrCancel()
+				mgrWg.Wait()
+			}
 			return fmt.Errorf("http shutdown: %w", err)
+		}
+		if mgrCancel != nil {
+			mgrCancel()
+			mgrWg.Wait()
 		}
 		return nil
 	case err := <-listenErr:
+		if mgrCancel != nil {
+			mgrCancel()
+			mgrWg.Wait()
+		}
 		return err
 	}
 }

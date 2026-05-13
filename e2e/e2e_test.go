@@ -44,12 +44,15 @@ func startTestServer(t *testing.T) (baseURL string, cancel func()) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := mcpserver.New(mcpserver.Config{
+	srv, err := mcpserver.New(mcpserver.Config{
 		Listener: l,
 		Token:    testToken,
 		Version:  "0.0.0+e2e",
 		Logger:   logger,
 	})
+	if err != nil {
+		t.Fatalf("mcpserver.New: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
