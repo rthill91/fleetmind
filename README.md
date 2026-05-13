@@ -55,6 +55,21 @@ curl -s -H 'Authorization: Bearer devtoken' \
      http://127.0.0.1:8765/mcp | head
 ```
 
+## Web UI
+
+The fleetmind binary ships a small operator console at
+`http://127.0.0.1:8765/ui/`. It is a zero-dependency static SPA embedded via
+`go:embed`; opening it in a browser gives you:
+
+* a live view of the fleet roster, driven by the `/fleet/events` SSE stream;
+* a chat panel that connects to the LLM provider of your choice (Anthropic,
+  OpenAI, or any OpenAI-compatible base URL) and uses the FleetMind MCP tools
+  to investigate the host you ask about.
+
+The bearer token and LLM API key are kept in browser `localStorage` only — the
+fleetmind server never sees the LLM key, and the LLM provider is called
+directly from the browser.
+
 ## Testing
 
 Unit tests cover the `/proc` and `/sys` parsers, auth middleware, and helper

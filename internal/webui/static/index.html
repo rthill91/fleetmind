@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FleetMind</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span class="title">FleetMind</span>
+    </div>
+
+    <form id="token-form" class="topbar-section" autocomplete="off">
+      <label class="field">
+        <span>Bearer token</span>
+        <input id="token" type="password" placeholder="paste fleetmind token" spellcheck="false">
+      </label>
+      <button id="token-save" type="submit">Save</button>
+      <button id="token-test" type="button">Test</button>
+      <span id="token-status" class="status-pill" data-state="idle">idle</span>
+    </form>
+
+    <form id="llm-form" class="topbar-section" autocomplete="off">
+      <label class="field">
+        <span>LLM</span>
+        <select id="llm-provider">
+          <option value="anthropic">Anthropic</option>
+          <option value="openai">OpenAI</option>
+          <option value="openai-compatible">OpenAI-compatible</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Base URL</span>
+        <input id="llm-base-url" type="text" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Model</span>
+        <input id="llm-model" type="text" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>API key</span>
+        <input id="llm-api-key" type="password" spellcheck="false">
+      </label>
+      <button id="llm-save" type="submit">Save</button>
+    </form>
+  </header>
+
+  <main class="layout">
+    <section id="nodes-panel" class="panel">
+      <header class="panel-head">
+        <h2>Fleet</h2>
+        <span id="nodes-count" class="muted">—</span>
+      </header>
+      <div id="nodes-empty" class="empty hidden">
+        <p>Fleet mode is disabled on this node.</p>
+        <p class="muted">Restart fleetmind with <code>--fleet-advertise</code> to enable peer discovery.</p>
+      </div>
+      <ul id="nodes-list" class="nodes-list"></ul>
+    </section>
+
+    <section id="chat-panel" class="panel">
+      <header class="panel-head">
+        <h2>Debug chat</h2>
+        <div class="panel-head-actions">
+          <span id="chat-target" class="muted">local node</span>
+          <button id="chat-clear" type="button">Clear</button>
+        </div>
+      </header>
+
+      <div id="chat-transcript" class="transcript" aria-live="polite"></div>
+
+      <form id="chat-form" class="composer">
+        <textarea id="chat-input" rows="3" placeholder="Ask about CPU, memory, processes, sensors, journal…  (⌘/Ctrl+Enter to send)"></textarea>
+        <button id="chat-send" type="submit">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

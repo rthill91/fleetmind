@@ -21,6 +21,7 @@ import (
 	"github.com/gjolly/fleetmind/internal/procfs"
 	"github.com/gjolly/fleetmind/internal/sysfs"
 	"github.com/gjolly/fleetmind/internal/tools"
+	"github.com/gjolly/fleetmind/internal/webui"
 )
 
 // Config controls how the server binds and authenticates.
@@ -113,6 +114,11 @@ func New(cfg Config) (*Server, error) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	// Static operator console. The HTML/JS/CSS load without auth so the user
+	// can paste their token; every API call the SPA makes carries that token
+	// against the existing bearer-protected endpoints.
+	mux.Handle("/ui/", webui.Handler())
+	mux.Handle("/ui", webui.Handler())
 	// Some MCP clients probe OAuth discovery endpoints. We don't speak OAuth
 	// (bearer-only), so return a JSON 404 they can parse rather than the
 	// default text/plain "404 page not found".
