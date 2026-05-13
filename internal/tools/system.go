@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/gjolly/fleetmind/internal/snapconf"
 )
 
 type systemInfoIn struct{}
@@ -59,8 +61,25 @@ func utsString(b []int8) string {
 }
 
 func readOSRelease() map[string]string {
+	// Inside a strictly-confined snap, /etc/os-release and /usr/lib/os-release
+	// are bind-mounted from the snap base (e.g. core24), so reading them
+	// reports "Ubuntu Core". snapd exposes the host's filesystem under
+	// /var/lib/snapd/hostfs, and the system-observe interface grants read
+	// access to os-release there — prefer those paths when in a snap.
+	var paths []string
+	if snapconf.InSnap() {
+		paths = []string{
+			"/var/lib/snapd/hostfs/etc/os-release",
+			"/var/lib/snapd/hostfs/usr/lib/os-release",
+			"/etc/os-release",
+			"/usr/lib/os-release",
+		}
+	} else {
+		paths = []string{"/etc/os-release", "/usr/lib/os-release"}
+	}
+
 	out := map[string]string{}
-	for _, p := range []string{"/etc/os-release", "/usr/lib/os-release"} {
+	for _, p := range paths {
 		f, err := os.Open(p) //nolint:gosec // fixed allowlist of os-release paths
 		if err != nil {
 			continue
