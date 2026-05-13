@@ -2,21 +2,27 @@
 
 ![FleetMind logo](images/fleetmind_logo.svg)
 
-**An AI co-pilot for your Linux fleet — that physically cannot break anything.**
+**An AI co-pilot for your Linux fleet, shipped as a strictly-confined snap
+that physically cannot break anything.**
 
-FleetMind is a Model Context Protocol (MCP) server, written in Go, that turns
-any Linux host into a structured, **read-only** observation surface an LLM
-agent can interrogate: hardware, processes, mounts, network, sensors, kernel,
-systemd, boot timings, and the journal. It ships as a **strictly-confined
-snap** with only `*-observe` interfaces attached, so even a compromised or
-prompt-injected agent has no path to mutate the host. The security boundary
-is the snap manifest, not the prompt.
+FleetMind is a Model Context Protocol (MCP) server, written in Go and
+**distributed as a snap**, that turns any Linux host into a structured,
+read-only observation surface an LLM agent can interrogate: hardware,
+processes, mounts, network, sensors, kernel, systemd, boot timings, and the
+journal. The snap attaches only `*-observe` interfaces — no `*-control`
+plug, no shell, no writable host paths outside `$SNAP_COMMON` — so the
+security boundary is the snap manifest itself, enforced by AppArmor and the
+kernel, not by prompt engineering. Even a compromised or prompt-injected
+agent has no path to mutate the host, and installing on a new machine is a
+single `snap install` away.
 
 **Why it's interesting**
 
-- **Safe by construction.** No `*-control` plug, no shell, no writable host
-  paths. The threat model is enforced by the kernel, not by prompt
-  engineering.
+- **Snap-confined, kernel-enforced.** Strict confinement with only
+  `*-observe` plugs; no `*-control` plug, no shell, no writable host paths.
+  The threat model lives in `snap/snapcraft.yaml` and is enforced by
+  AppArmor, not by your system prompt — an exploited agent simply cannot
+  escalate.
 - **Fleet-aware.** Run FleetMind on every node and they form a full-mesh
   cluster via explicit, kubeadm-style join. An agent connected to any single
   node can fan out tool calls across the whole fleet with `fleet_query`
