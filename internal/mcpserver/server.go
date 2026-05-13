@@ -87,11 +87,12 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	deps := tools.Deps{
-		Exec:   exectool.NewRunner(),
-		ProcFS: procfs.Default,
-		SysFS:  sysfs.Default,
-		Logger: cfg.Logger,
-		Fleet:  fleetReg,
+		Exec:       exectool.NewRunner(),
+		ProcFS:     procfs.Default,
+		SysFS:      sysfs.Default,
+		Logger:     cfg.Logger,
+		Fleet:      fleetReg,
+		FleetToken: cfg.Token,
 	}
 	tools.RegisterAll(mcpSrv, deps)
 

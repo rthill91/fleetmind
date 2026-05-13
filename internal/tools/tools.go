@@ -24,8 +24,11 @@ type Deps struct {
 	SysFS  sysfs.Root
 	Logger *slog.Logger
 	// Fleet is the local fleet registry. Nil when fleet mode is disabled —
-	// list_fleet is still registered but reports an empty roster.
+	// list_fleet and fleet_query are still registered but report disabled.
 	Fleet *fleet.Registry
+	// FleetToken is the shared bearer secret used to authenticate outbound
+	// MCP calls to fleet peers. Empty when fleet mode is disabled.
+	FleetToken string
 }
 
 // AllToolNames lists every MCP tool name RegisterAll attaches. Kept in sync
@@ -51,6 +54,7 @@ var AllToolNames = []string{
 	"read_journal",
 	"read_dmesg",
 	"list_fleet",
+	"fleet_query",
 }
 
 // RegisterAll attaches every tool to s.
@@ -69,6 +73,7 @@ func RegisterAll(s *mcp.Server, d Deps) {
 	registerHardware(s, d)
 	registerLogs(s, d)
 	registerFleet(s, d)
+	registerFleetQuery(s, d)
 }
 
 // textResult builds an MCP CallToolResult with a single textual summary line.
