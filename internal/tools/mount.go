@@ -7,6 +7,9 @@ import (
 	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/gjolly/fleetmind/internal/procfs"
+	"github.com/gjolly/fleetmind/internal/snapconf"
 )
 
 type listMountsIn struct {
@@ -47,7 +50,20 @@ func registerMount(s *mcp.Server, d Deps) {
 			}
 			mpRE = re
 		}
-		entries, err := d.ProcFS.Mounts()
+		// Inside a strictly-confined snap, /proc/self/mountinfo is the snap's
+		// confined mount namespace (snap base bind-mounts, tmpfs overlays,
+		// every other snap's squashfs). Read PID 1's mountinfo instead — host
+		// systemd lives in the host's mount namespace, and the mount-observe
+		// plug grants read access to /proc/[pid]/mountinfo.
+		var (
+			entries []procfs.MountEntry
+			err     error
+		)
+		if snapconf.InSnap() {
+			entries, err = d.ProcFS.MountsForPID("1")
+		} else {
+			entries, err = d.ProcFS.Mounts()
+		}
 		if err != nil {
 			return nil, listMountsOut{}, err
 		}

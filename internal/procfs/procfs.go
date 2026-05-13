@@ -214,7 +214,14 @@ type MountEntry struct {
 // Mounts parses /proc/self/mountinfo following the format described in
 // Documentation/filesystems/proc.rst.
 func (r Root) Mounts() ([]MountEntry, error) {
-	f, err := os.Open(r.file("self", "mountinfo"))
+	return r.MountsForPID("self")
+}
+
+// MountsForPID parses /proc/<pid>/mountinfo. Useful for reading the host's
+// mount table from inside a strictly-confined snap by passing "1" (host
+// systemd lives in the host's mount namespace).
+func (r Root) MountsForPID(pid string) ([]MountEntry, error) {
+	f, err := os.Open(r.file(pid, "mountinfo"))
 	if err != nil {
 		return nil, err
 	}
