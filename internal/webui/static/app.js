@@ -82,6 +82,82 @@ function setStatus(elem, state, text) {
   elem.textContent = text;
 }
 
+// ---- lightweight markdown → HTML ----
+
+function renderMarkdown(text) {
+  // Escape HTML so LLM output can never inject raw tags.
+  let html = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // Protect fenced code blocks (``` … ```)
+  const codeBlocks = [];
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push(`<pre><code>${code}</code></pre>`);
+    return `\x00CB${codeBlocks.length - 1}\x00`;
+  });
+
+  // Protect inline code (`…`)
+  const inlineCodes = [];
+  html = html.replace(/`([^`\n]+)`/g, (_, code) => {
+    inlineCodes.push(`<code>${code}</code>`);
+    return `\x00IC${inlineCodes.length - 1}\x00`;
+  });
+
+  // Bold then italic (order matters)
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+
+  // Headers
+  html = html.replace(/^#### (.+)$/gm, "<h5>$1</h5>");
+  html = html.replace(/^### (.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^## (.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^# (.+)$/gm, "<h2>$1</h2>");
+
+  // Horizontal rules
+  html = html.replace(/^---+$/gm, "<hr>");
+
+  // Links — only allow http/https to prevent javascript: URIs
+  html = html.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+  );
+
+  // Unordered lists: consecutive lines starting with - or *
+  html = html.replace(/(?:^[*\-] .+(?:\n|$))+/gm, (match) => {
+    const items = match
+      .trim()
+      .split("\n")
+      .map((l) => `<li>${l.replace(/^[*\-] /, "")}</li>`)
+      .join("");
+    return `<ul>${items}</ul>`;
+  });
+
+  // Ordered lists: consecutive lines starting with 1. 2. etc.
+  html = html.replace(/(?:^\d+\. .+(?:\n|$))+/gm, (match) => {
+    const items = match
+      .trim()
+      .split("\n")
+      .map((l) => `<li>${l.replace(/^\d+\. /, "")}</li>`)
+      .join("");
+    return `<ol>${items}</ol>`;
+  });
+
+  // Convert remaining newlines to <br>
+  html = html.replace(/\n/g, "<br>");
+
+  // Clean stray <br> adjacent to block elements
+  html = html.replace(/<br>(<\/?(?:h[2-5]|pre|ul|ol|li|hr))/g, "$1");
+  html = html.replace(/((?:<\/(?:h[2-5]|pre|ul|ol|li)>|<hr>))<br>/g, "$1");
+
+  // Restore protected code
+  html = html.replace(/\x00CB(\d+)\x00/g, (_, i) => codeBlocks[i]);
+  html = html.replace(/\x00IC(\d+)\x00/g, (_, i) => inlineCodes[i]);
+
+  return html;
+}
+
 // ---- settings panel wiring ----
 
 function initSettings() {
@@ -278,9 +354,11 @@ const fleet = (() => {
       if (err.name !== "AbortError") console.warn("fleet stream:", err);
     }
 
-    // Refresh heartbeat ages so the pills change colour even when no events
-    // arrive (e.g. a totally idle solo fleet).
-    heartbeatTimer = setInterval(render, 5000);
+    // Periodically re-fetch peer data so status stays accurate even if the
+    // SSE stream drops silently or heartbeats lag.
+    heartbeatTimer = setInterval(() => {
+      loadInitial();
+    }, 5000);
   }
 
   function disconnect() {
@@ -445,7 +523,12 @@ const chat = (() => {
   let busy = false;
 
   function appendBubble(role, text) {
-    const node = el("div", { class: `bubble ${role}` }, text);
+    const node = el("div", { class: `bubble ${role}` });
+    if (role === "assistant") {
+      node.innerHTML = renderMarkdown(text);
+    } else {
+      node.textContent = text;
+    }
     $("#chat-transcript").appendChild(node);
     scrollToEnd();
     return node;
@@ -721,7 +804,7 @@ function initChat() {
   });
 
   input.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       form.requestSubmit();
     }
