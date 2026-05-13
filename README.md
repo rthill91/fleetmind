@@ -1,14 +1,41 @@
 # FleetMind
 
-![FleeMind logo](fleetmind_logo.svg)
+![FleetMind logo](images/fleetmind_logo.svg)
 
-FleetMind is a Model Context Protocol (MCP) server, written in Go, that gives
-an LLM agent broad **read-only** visibility into a Linux host. It ships as a
-**strictly confined snap** whose only attached interfaces are observation
-plugs — even a compromised agent cannot mutate the host.
+**An AI co-pilot for your Linux fleet — that physically cannot break anything.**
 
-The server speaks the [Streamable HTTP MCP transport][mcp-spec] on
-`127.0.0.1:8765` (port configurable) behind bearer-token auth.
+FleetMind is a Model Context Protocol (MCP) server, written in Go, that turns
+any Linux host into a structured, **read-only** observation surface an LLM
+agent can interrogate: hardware, processes, mounts, network, sensors, kernel,
+systemd, boot timings, and the journal. It ships as a **strictly-confined
+snap** with only `*-observe` interfaces attached, so even a compromised or
+prompt-injected agent has no path to mutate the host. The security boundary
+is the snap manifest, not the prompt.
+
+**Why it's interesting**
+
+- **Safe by construction.** No `*-control` plug, no shell, no writable host
+  paths. The threat model is enforced by the kernel, not by prompt
+  engineering.
+- **Fleet-aware.** Run FleetMind on every node and they form a full-mesh
+  cluster via explicit, kubeadm-style join. An agent connected to any single
+  node can fan out tool calls across the whole fleet with `fleet_query`
+  (*"which host has the failing NVMe?"*, *"show me the slowest boot in the
+  cluster"*) and watch membership change live over SSE.
+- **Batteries-included UI.** Open `http://127.0.0.1:8765/ui/` and you get a
+  zero-dependency operator console: a live fleet roster on one side, a chat
+  panel on the other, wired straight to Anthropic, OpenAI, or any
+  OpenAI-compatible endpoint. Your API key stays in the browser — the
+  fleetmind daemon never sees it.
+
+![FleetMind operator console](images/screenshot-ui.png)
+<!-- TODO: drop a UI screenshot at docs/screenshot-ui.png -->
+
+Under the hood, the daemon speaks the [Streamable HTTP MCP transport][mcp-spec]
+on `127.0.0.1:8765` (port configurable) behind bearer-token auth, and every
+external binary it shells out to (`lsblk`, `ss`, `journalctl`, `dmesg`) runs
+through a hardened wrapper with fixed argv, `LC_ALL=C`, a 10-second timeout
+and a 4 MiB output cap.
 
 [mcp-spec]: https://modelcontextprotocol.io/specification
 
@@ -31,6 +58,7 @@ The server speaks the [Streamable HTTP MCP transport][mcp-spec] on
 | `boot_time`, `boot_blame`, `boot_critical_chain` | Per-phase boot timings, per-unit init time, and the critical chain (slowest predecessor at each After= hop) — read directly from `org.freedesktop.systemd1` over the system D-Bus |
 | `list_systemd_units`, `unit_status`, `list_timers` | systemd unit inventory (with `state`/`type` filters), per-unit property bag + journal tail, and all timer units with their next/last elapse timestamps |
 | `list_fleet` | Every MCP server the local node sees in its fleet (fleet mode) |
+| `fleet_query` | Fan-out a tool call to every node in the fleet (including self) and return per-node results (fleet mode) |
 
 The six systemd-aware tools talk to `org.freedesktop.systemd1` via the
 well-known socket at `/run/dbus/system_bus_socket` (permitted by the base
