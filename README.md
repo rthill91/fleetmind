@@ -25,8 +25,19 @@ The server speaks the [Streamable HTTP MCP transport][mcp-spec] on
 | `list_pci_devices`, `list_usb_devices` | Device IDs and bound kernel drivers |
 | `kernel_info`, `list_kernel_modules` | Kernel build, cmdline, loaded modules |
 | `list_dmi`, `list_sensors` | SMBIOS/DMI strings; hwmon temperatures, voltages, fans |
-| `read_journal`, `read_dmesg` | Recent journald and kernel ring-buffer entries |
+| `read_journal`, `read_dmesg` | Recent journald and kernel ring-buffer entries. `read_journal` supports `boot:-N` for previous-boot reads and `match` for server-side regex grep. |
+| `boot_time`, `boot_blame`, `boot_critical_chain` *(†)* | Parsed `systemd-analyze` outputs: per-phase boot timings, per-unit init time, and the critical chain that gated the default target |
+| `list_systemd_units`, `unit_status`, `list_timers` *(†)* | systemd unit inventory (with `state`/`type` filters), per-unit detail + journal tail, and all scheduled timers |
 | `list_fleet` | Every MCP server the local node sees in its fleet (fleet mode) |
+
+*(†) Snap-confinement note:* the `systemd-analyze` and `systemctl` family
+require D-Bus access to the systemd system bus, which the current strict
+plug list (`system-observe` etc.) does not grant. These six tools therefore
+return `isError: true` with `Failed to connect to bus: Permission denied`
+inside the snap; they work normally when the daemon is run as a plain binary
+outside the snap (the README's "Building locally" recipe). Adding a D-Bus
+plug to expose them in the snap is tracked as a follow-up — see the
+deferred-items section of the plan in `.claude/plans/`.
 
 ## Building locally
 

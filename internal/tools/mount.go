@@ -2,12 +2,17 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type listMountsIn struct{}
+type listMountsIn struct {
+	Fstype          string `json:"fstype,omitempty" jsonschema:"keep only mounts of this fstype (e.g. ext4, btrfs, squashfs)"`
+	MountPointRegex string `json:"mount_point_regex,omitempty" jsonschema:"keep only mounts whose mount point matches this regex (max 200 chars)"`
+}
 
 type mountOut struct {
 	MountPoint  string `json:"mount_point"`
@@ -29,14 +34,31 @@ type listMountsOut struct {
 func registerMount(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_mounts",
-		Description: "All mount points from /proc/self/mountinfo, enriched with statfs sizes for normal filesystems.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listMountsIn) (*mcp.CallToolResult, listMountsOut, error) {
+		Description: "All mount points from /proc/self/mountinfo, enriched with statfs sizes for normal filesystems. Optional filters: fstype, mount_point_regex.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in listMountsIn) (*mcp.CallToolResult, listMountsOut, error) {
+		var mpRE *regexp.Regexp
+		if in.MountPointRegex != "" {
+			if len(in.MountPointRegex) > 200 {
+				return nil, listMountsOut{}, fmt.Errorf("mount_point_regex too long (%d > 200)", len(in.MountPointRegex))
+			}
+			re, err := regexp.Compile(in.MountPointRegex)
+			if err != nil {
+				return nil, listMountsOut{}, fmt.Errorf("mount_point_regex does not compile: %w", err)
+			}
+			mpRE = re
+		}
 		entries, err := d.ProcFS.Mounts()
 		if err != nil {
 			return nil, listMountsOut{}, err
 		}
 		out := listMountsOut{Mounts: make([]mountOut, 0, len(entries))}
 		for _, e := range entries {
+			if in.Fstype != "" && e.Type != in.Fstype {
+				continue
+			}
+			if mpRE != nil && !mpRE.MatchString(e.MountPoint) {
+				continue
+			}
 			m := mountOut{
 				MountPoint: e.MountPoint, Source: e.Source,
 				Type: e.Type, Options: e.Options,

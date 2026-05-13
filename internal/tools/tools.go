@@ -50,6 +50,12 @@ var AllToolNames = []string{
 	"list_sensors",
 	"read_journal",
 	"read_dmesg",
+	"boot_time",
+	"boot_blame",
+	"boot_critical_chain",
+	"list_systemd_units",
+	"unit_status",
+	"list_timers",
 	"list_fleet",
 }
 
@@ -68,6 +74,8 @@ func RegisterAll(s *mcp.Server, d Deps) {
 	registerKernel(s, d)
 	registerHardware(s, d)
 	registerLogs(s, d)
+	registerBoot(s, d)
+	registerSystemd(s, d)
 	registerFleet(s, d)
 }
 
