@@ -27,8 +27,16 @@ The server speaks the [Streamable HTTP MCP transport][mcp-spec] on
 | `list_pci_devices`, `list_usb_devices` | Device IDs and bound kernel drivers |
 | `kernel_info`, `list_kernel_modules` | Kernel build, cmdline, loaded modules |
 | `list_dmi`, `list_sensors` | SMBIOS/DMI strings; hwmon temperatures, voltages, fans |
-| `read_journal`, `read_dmesg` | Recent journald and kernel ring-buffer entries |
+| `read_journal`, `read_dmesg` | Recent journald and kernel ring-buffer entries. `read_journal` supports `boot:-N` for previous-boot reads and `match` for server-side regex grep. |
+| `boot_time`, `boot_blame`, `boot_critical_chain` | Per-phase boot timings, per-unit init time, and the critical chain (slowest predecessor at each After= hop) — read directly from `org.freedesktop.systemd1` over the system D-Bus |
+| `list_systemd_units`, `unit_status`, `list_timers` | systemd unit inventory (with `state`/`type` filters), per-unit property bag + journal tail, and all timer units with their next/last elapse timestamps |
 | `list_fleet` | Every MCP server the local node sees in its fleet (fleet mode) |
+
+The six systemd-aware tools talk to `org.freedesktop.systemd1` via the
+well-known socket at `/run/dbus/system_bus_socket` (permitted by the base
+AppArmor abstraction). Shelling out to `systemd-analyze` / `systemctl` would
+not work under strict confinement because they bind abstract sockets outside
+the snap's namespace; the direct-D-Bus approach sidesteps that entirely.
 
 ## Building locally
 

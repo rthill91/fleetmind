@@ -44,6 +44,46 @@ func TestJournalArgs(t *testing.T) {
 			t.Fatal("expected error for excessive lines")
 		}
 	})
+	t.Run("accepts boot offset", func(t *testing.T) {
+		args, err := journalArgs(readJournalIn{Boot: -1})
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "-b -1") {
+			t.Errorf("missing -b -1: %q", joined)
+		}
+	})
+	t.Run("rejects out-of-range boot offset", func(t *testing.T) {
+		if _, err := journalArgs(readJournalIn{Boot: 1}); err == nil {
+			t.Fatal("expected error for boot=1")
+		}
+		if _, err := journalArgs(readJournalIn{Boot: -11}); err == nil {
+			t.Fatal("expected error for boot=-11")
+		}
+	})
+	t.Run("accepts match regex", func(t *testing.T) {
+		args, err := journalArgs(readJournalIn{Match: "failed|error"})
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--grep failed|error") {
+			t.Errorf("missing --grep: %q", joined)
+		}
+	})
+	t.Run("rejects bad match regex", func(t *testing.T) {
+		if _, err := journalArgs(readJournalIn{Match: "abc\x00def"}); err == nil {
+			t.Fatal("expected error for non-printable bytes")
+		}
+		if _, err := journalArgs(readJournalIn{Match: "[unclosed"}); err == nil {
+			t.Fatal("expected error for uncompilable regex")
+		}
+		big := strings.Repeat("a", 201)
+		if _, err := journalArgs(readJournalIn{Match: big}); err == nil {
+			t.Fatal("expected error for too-long regex")
+		}
+	})
 }
 
 func TestTailLines(t *testing.T) {

@@ -5,6 +5,7 @@ go 1.25.0
 require github.com/modelcontextprotocol/go-sdk v1.6.0
 
 require (
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect

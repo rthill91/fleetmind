@@ -19,6 +19,8 @@ type readJournalIn struct {
 	Lines    int    `json:"lines,omitempty" jsonschema:"how many recent lines to return (default 100, max 5000)"`
 	Priority string `json:"priority,omitempty" jsonschema:"minimum priority: emerg|alert|crit|err|warning|notice|info|debug"`
 	Since    string `json:"since,omitempty" jsonschema:"timestamp accepted by --since (e.g. '1h ago', '2026-05-13 09:00')"`
+	Boot     int    `json:"boot,omitempty" jsonschema:"boot offset for journalctl -b (0 = current boot, -1 = previous boot, …). Valid range -10..0."`
+	Match    string `json:"match,omitempty" jsonschema:"PCRE regex passed to journalctl --grep (max 200 chars)"`
 }
 
 type readJournalOut struct {
@@ -62,7 +64,10 @@ func registerLogs(s *mcp.Server, d Deps) {
 		if lines > 5000 {
 			return nil, readDmesgOut{}, errors.New("lines must be <= 5000")
 		}
-		stdout, _, err := d.Exec.Run(ctx, "dmesg", "--time-format=iso", "--color=never", "--read-clear=false")
+		// dmesg is read-only-no-clear by default. We deliberately do NOT pass
+		// --read-clear (which is the consume-and-clear flag, has no boolean
+		// argument, and would also require an extra capability).
+		stdout, _, err := d.Exec.Run(ctx, "dmesg", "--time-format=iso", "--color=never")
 		if err != nil {
 			return nil, readDmesgOut{}, fmt.Errorf("dmesg: %w", err)
 		}
@@ -104,8 +109,30 @@ func journalArgs(in readJournalIn) ([]string, error) {
 		}
 		args = append(args, "--since", in.Since)
 	}
+	if in.Boot != 0 {
+		if in.Boot < -10 || in.Boot > 0 {
+			return nil, fmt.Errorf("boot must be in [-10, 0], got %d", in.Boot)
+		}
+		args = append(args, "-b", strconv.Itoa(in.Boot))
+	}
+	if in.Match != "" {
+		if len(in.Match) > 200 {
+			return nil, fmt.Errorf("match regex too long (%d > 200)", len(in.Match))
+		}
+		if !matchRE.MatchString(in.Match) {
+			return nil, fmt.Errorf("invalid match regex %q (control chars or non-printable bytes rejected)", in.Match)
+		}
+		if _, err := regexp.Compile(in.Match); err != nil {
+			return nil, fmt.Errorf("match regex does not compile: %w", err)
+		}
+		args = append(args, "--grep", in.Match)
+	}
 	return args, nil
 }
+
+// matchRE is a safety screen for --grep input: printable ASCII only. We still
+// compile the regex in Go to reject patterns journalctl would also refuse.
+var matchRE = regexp.MustCompile(`^[\x20-\x7E]+$`)
 
 // sinceRE accepts ASCII timestamps and the common human-readable forms
 // journalctl supports. Anything more exotic is rejected to keep argv tight.

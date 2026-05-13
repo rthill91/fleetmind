@@ -41,6 +41,14 @@ apps:
       - network-observe
       - log-observe
       - kernel-module-observe
+    slots:
+      - systemd-bus
+
+slots:
+  systemd-bus:
+    interface: dbus
+    bus: system
+    name: org.freedesktop.systemd1
 
 parts:
   fleetmind:
