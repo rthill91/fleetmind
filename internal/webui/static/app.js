@@ -603,6 +603,15 @@ const chat = (() => {
 
   function toolResultText(result) {
     if (!result) return "";
+    // FleetMind tools return a one-line summary in content[] and the typed
+    // payload in structuredContent. When both are present the summary just
+    // duplicates fields already in the structured payload (e.g. "3 items"
+    // vs {"count": 3, ...}) — prefer the structured form and skip the text
+    // to keep the LLM's tool_result tight.
+    const sc = result.structuredContent;
+    if (sc && typeof sc === "object" && Object.keys(sc).length > 0) {
+      return JSON.stringify(sc, null, 2);
+    }
     if (Array.isArray(result.content)) {
       return result.content
         .map((c) => (c.type === "text" ? c.text : JSON.stringify(c)))
