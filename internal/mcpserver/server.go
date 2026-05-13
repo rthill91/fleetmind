@@ -75,6 +75,14 @@ func New(cfg Config) *Server {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	// Some MCP clients probe OAuth discovery endpoints. We don't speak OAuth
+	// (bearer-only), so return a JSON 404 they can parse rather than the
+	// default text/plain "404 page not found".
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not_found"}` + "\n"))
+	})
 
 	addr := net.JoinHostPort(cfg.BindHost, fmt.Sprintf("%d", cfg.Port))
 	httpSrv := &http.Server{

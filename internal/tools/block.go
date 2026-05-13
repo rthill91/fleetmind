@@ -11,8 +11,10 @@ import (
 type listBlockIn struct{}
 
 type listBlockOut struct {
-	// Devices is the parsed lsblk JSON tree (structure mirrors `lsblk -J -O`).
-	Devices any `json:"devices"`
+	// Devices is the parsed lsblk JSON object. lsblk -J emits
+	// {"blockdevices": [...]} so we model it as an object map; deeper structure
+	// is left as free-form to avoid pinning to a specific util-linux version.
+	Devices map[string]any `json:"devices"`
 }
 
 func registerBlock(s *mcp.Server, d Deps) {
@@ -24,7 +26,7 @@ func registerBlock(s *mcp.Server, d Deps) {
 		if err != nil {
 			return nil, listBlockOut{}, fmt.Errorf("lsblk: %w", err)
 		}
-		var parsed any
+		parsed := map[string]any{}
 		if err := json.Unmarshal(stdout, &parsed); err != nil {
 			return nil, listBlockOut{}, fmt.Errorf("parse lsblk output: %w", err)
 		}
