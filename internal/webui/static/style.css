@@ -346,6 +346,29 @@ input:focus, select:focus, textarea:focus {
 .bubble.assistant strong { font-weight: 600; }
 .bubble.assistant em { font-style: italic; }
 
+.bubble.assistant table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+.bubble.assistant th,
+.bubble.assistant td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+}
+
+.bubble.assistant th {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.bubble.assistant tr:nth-child(even) td {
+  background: var(--bg-elev-2);
+}
+
 .bubble.error {
   align-self: stretch;
   background: var(--bad);

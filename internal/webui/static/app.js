@@ -124,6 +124,32 @@ function renderMarkdown(text) {
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
   );
 
+  // Tables: consecutive lines containing pipes
+  html = html.replace(/(?:^\|.+\|\s*(?:\n|$))+/gm, (match) => {
+    const rows = match.trim().split("\n");
+    if (rows.length < 2) return match;
+    // Check if second row is a separator (e.g. |---|---|)
+    const sepTest = rows[1].replace(/\s/g, "");
+    const isSep = /^\|?[\-:|]+(?:\|[\-:|]+)+\|?$/.test(sepTest);
+    if (!isSep) return match;
+
+    const parseRow = (row) =>
+      row.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+
+    const headerCells = parseRow(rows[0]);
+    const thead = "<thead><tr>" + headerCells.map((c) => `<th>${c}</th>`).join("") + "</tr></thead>";
+
+    const bodyRows = rows.slice(2);
+    const tbody = bodyRows.length
+      ? "<tbody>" + bodyRows.map((r) => {
+          const cells = parseRow(r);
+          return "<tr>" + cells.map((c) => `<td>${c}</td>`).join("") + "</tr>";
+        }).join("") + "</tbody>"
+      : "";
+
+    return `<table>${thead}${tbody}</table>`;
+  });
+
   // Unordered lists: consecutive lines starting with - or *
   html = html.replace(/(?:^[*\-] .+(?:\n|$))+/gm, (match) => {
     const items = match
@@ -148,8 +174,8 @@ function renderMarkdown(text) {
   html = html.replace(/\n/g, "<br>");
 
   // Clean stray <br> adjacent to block elements
-  html = html.replace(/<br>(<\/?(?:h[2-5]|pre|ul|ol|li|hr))/g, "$1");
-  html = html.replace(/((?:<\/(?:h[2-5]|pre|ul|ol|li)>|<hr>))<br>/g, "$1");
+  html = html.replace(/<br>(<\/?(?:h[2-5]|pre|ul|ol|li|hr|table|thead|tbody|tr|th|td))/g, "$1");
+  html = html.replace(/((?:<\/(?:h[2-5]|pre|ul|ol|li|table|thead|tbody|tr|th|td)>|<hr>))<br>/g, "$1");
 
   // Restore protected code
   html = html.replace(/\x00CB(\d+)\x00/g, (_, i) => codeBlocks[i]);
