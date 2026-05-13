@@ -1,5 +1,7 @@
 # FleetMind
 
+![FleeMind logo](fleetmind_logo.svg)
+
 FleetMind is a Model Context Protocol (MCP) server, written in Go, that gives
 an LLM agent broad **read-only** visibility into a Linux host. It ships as a
 **strictly confined snap** whose only attached interfaces are observation
