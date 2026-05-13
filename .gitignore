@@ -1,0 +1,9 @@
+/bin/
+/dist/
+*.snap
+*.test
+*.out
+.snapcraft/
+parts/
+stage/
+prime/

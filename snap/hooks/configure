@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+PORT="$(snapctl get port)"
+case "$PORT" in
+    '')
+        snapctl set port=8765
+        ;;
+    *[!0-9]*)
+        echo "fleetmind: port must be numeric, got '$PORT'" >&2
+        exit 1
+        ;;
+    *)
+        if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+            echo "fleetmind: port '$PORT' out of range (1-65535)" >&2
+            exit 1
+        fi
+        ;;
+esac

@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+# Set the default port if the user has not already configured one. The daemon
+# (re)reads `port` from snap config at startup.
+if [ -z "$(snapctl get port)" ]; then
+    snapctl set port=8765
+fi

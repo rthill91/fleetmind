@@ -1,0 +1,61 @@
+name: fleetmind
+base: core24
+adopt-info: fleetmind
+summary: Read-only Linux observability over MCP
+description: |
+  FleetMind is a Model Context Protocol (MCP) server that exposes structured,
+  read-only views of a Linux host: hardware, kernel, processes, mounts,
+  network, sensors and journal logs.
+
+  The snap is strictly confined and uses only *-observe interfaces, so an LLM
+  agent connected to it cannot mutate the host.
+
+  After install, retrieve the bearer token with:
+
+      sudo snap get fleetmind token
+
+  Then point your MCP client at http://127.0.0.1:8765/mcp with header
+  "Authorization: Bearer <token>".
+
+  Journal and kernel-log tools require manual interface connection:
+
+      sudo snap connect fleetmind:log-observe
+      sudo snap connect fleetmind:kernel-module-observe
+
+license: Apache-2.0
+confinement: strict
+grade: stable
+
+apps:
+  fleetmind:
+    command: bin/fleetmind
+    daemon: simple
+    install-mode: enable
+    restart-condition: on-failure
+    plugs:
+      - network-bind
+      - hardware-observe
+      - system-observe
+      - mount-observe
+      - network-observe
+      - log-observe
+      - kernel-module-observe
+
+parts:
+  fleetmind:
+    plugin: go
+    source: .
+    build-snaps:
+      - go/1.25/stable
+    build-packages:
+      - git
+    stage-packages:
+      - util-linux
+      - iproute2
+      - systemd
+      - kmod
+      - pciutils
+      - usbutils
+    override-pull: |
+      craftctl default
+      craftctl set version="$(git -C "$CRAFT_PART_SRC" describe --tags --always --dirty 2>/dev/null || echo 0.0.0+unknown)"
