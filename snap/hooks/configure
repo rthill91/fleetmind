@@ -17,3 +17,13 @@ case "$PORT" in
         fi
         ;;
 esac
+
+BIND="$(snapctl get bind)"
+case "$BIND" in
+    ''|127.0.0.1|0.0.0.0)
+        ;;
+    *)
+        echo "fleetmind: bind must be 127.0.0.1 or 0.0.0.0, got '$BIND'" >&2
+        exit 1
+        ;;
+esac

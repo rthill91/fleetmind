@@ -42,6 +42,11 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	resolvedBind, err := resolveBind(ctx, *bind)
+	if err != nil {
+		return err
+	}
+
 	resolvedPort, err := resolvePort(ctx, *port)
 	if err != nil {
 		return err
@@ -53,7 +58,7 @@ func run() error {
 	}
 
 	srv := mcpserver.New(mcpserver.Config{
-		BindHost: *bind,
+		BindHost: resolvedBind,
 		Port:     resolvedPort,
 		Token:    token,
 		Version:  buildVersion(),
@@ -61,6 +66,22 @@ func run() error {
 	})
 
 	return srv.Serve(ctx)
+}
+
+// resolveBind honours, in order: the --bind flag if non-empty, then the snap
+// config key "bind", then the default 127.0.0.1.
+func resolveBind(ctx context.Context, flagBind string) (string, error) {
+	if flagBind != "127.0.0.1" {
+		return flagBind, nil
+	}
+	raw, err := snapconf.Get(ctx, "bind")
+	if err != nil {
+		return "", fmt.Errorf("read snap config bind: %w", err)
+	}
+	if raw == "" {
+		return "127.0.0.1", nil
+	}
+	return raw, nil
 }
 
 // resolvePort honours, in order: the --port flag if non-zero, then the snap
