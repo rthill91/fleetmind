@@ -3,12 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/gjolly/fleetmind/internal/sysd"
 )
 
 // -------- boot_time ----------------------------------------------------------
@@ -24,7 +23,6 @@ type bootTimeOut struct {
 	TotalSec         float64 `json:"total_seconds"`
 	TargetReached    string  `json:"target_reached,omitempty"`
 	TargetReachedSec float64 `json:"target_reached_seconds,omitempty"`
-	Raw              string  `json:"raw"`
 }
 
 // -------- boot_blame ---------------------------------------------------------
@@ -54,31 +52,46 @@ type chainEntry struct {
 }
 
 type bootCriticalChainOut struct {
-	Units []chainEntry `json:"units"`
-	Raw   string       `json:"raw"`
+	Default string       `json:"default_target"`
+	Units   []chainEntry `json:"units"`
 }
 
-func registerBoot(s *mcp.Server, d Deps) {
+func registerBoot(s *mcp.Server, _ Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "boot_time",
-		Description: "Parsed `systemd-analyze time` output: per-phase boot timings " +
-			"(firmware, loader, kernel, initrd, userspace) and the total. " +
-			"Phases that don't apply on this host are reported as 0 (e.g. firmware on a VM).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ bootTimeIn) (*mcp.CallToolResult, bootTimeOut, error) {
-		stdout, _, err := d.Exec.Run(ctx, "systemd-analyze", "time")
+		Description: "Per-phase boot timings from the systemd manager: firmware/loader " +
+			"(when known), kernel, initrd (when used), userspace, and the total. " +
+			"Pulled from org.freedesktop.systemd1 Manager properties over the system " +
+			"D-Bus, so it works inside strict snap confinement.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ bootTimeIn) (*mcp.CallToolResult, bootTimeOut, error) {
+		m, err := sysd.Open()
 		if err != nil {
-			return nil, bootTimeOut{}, fmt.Errorf("systemd-analyze time: %w", err)
+			return nil, bootTimeOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		out := parseBootTime(string(stdout))
+		defer m.Close()
+		bt, err := m.BootTimes()
+		if err != nil {
+			return nil, bootTimeOut{}, fmt.Errorf("read boot times: %w", err)
+		}
+		out := composeBootTime(bt)
+		if name, err := m.DefaultTarget(); err == nil && name != "" {
+			out.TargetReached = name
+			if path, err := m.GetUnit(name); err == nil {
+				if t, err := m.UnitTimings(path, name); err == nil && t.ActiveEnterMonotonicUsec > 0 && bt.UserspaceMonotonicUsec > 0 {
+					out.TargetReachedSec = float64(t.ActiveEnterMonotonicUsec-bt.UserspaceMonotonicUsec) / 1e6
+				}
+			}
+		}
 		return textResult("boot total %.2fs (kernel %.2fs · userspace %.2fs)",
 			out.TotalSec, out.KernelSec, out.UserspaceSec), out, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "boot_blame",
-		Description: "Parsed `systemd-analyze blame` output: per-unit initialization time, " +
-			"sorted descending. Use `top` to cap the response (default 50).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bootBlameIn) (*mcp.CallToolResult, bootBlameOut, error) {
+		Description: "Per-unit initialization time during the current boot, sorted descending. " +
+			"Computed from each unit's InactiveExit→ActiveEnter monotonic timestamp delta " +
+			"via D-Bus. `top` caps the response (default 50, max 500).",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in bootBlameIn) (*mcp.CallToolResult, bootBlameOut, error) {
 		top := in.Top
 		if top <= 0 {
 			top = 50
@@ -86,11 +99,30 @@ func registerBoot(s *mcp.Server, d Deps) {
 		if top > 500 {
 			return nil, bootBlameOut{}, fmt.Errorf("top must be <= 500, got %d", top)
 		}
-		stdout, _, err := d.Exec.Run(ctx, "systemd-analyze", "blame")
+		m, err := sysd.Open()
 		if err != nil {
-			return nil, bootBlameOut{}, fmt.Errorf("systemd-analyze blame: %w", err)
+			return nil, bootBlameOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		entries := parseBlame(string(stdout))
+		defer m.Close()
+		units, err := m.ListUnits()
+		if err != nil {
+			return nil, bootBlameOut{}, err
+		}
+		entries := make([]blameEntry, 0, len(units))
+		for _, u := range units {
+			t, err := m.UnitTimings(u.Path, u.Name)
+			if err != nil {
+				continue
+			}
+			dur := t.StartupUsec()
+			if dur == 0 {
+				continue
+			}
+			entries = append(entries, blameEntry{Unit: u.Name, InitSeconds: float64(dur) / 1e6})
+		}
+		sort.SliceStable(entries, func(i, j int) bool {
+			return entries[i].InitSeconds > entries[j].InitSeconds
+		})
 		if len(entries) > top {
 			entries = entries[:top]
 		}
@@ -100,166 +132,112 @@ func registerBoot(s *mcp.Server, d Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "boot_critical_chain",
-		Description: "Parsed `systemd-analyze critical-chain`: the serialized chain of units " +
-			"that gated the default target (typically multi-user.target). Each entry carries " +
-			"the cumulative active-at time and the unit's own startup time when systemd reports it.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ bootCriticalChainIn) (*mcp.CallToolResult, bootCriticalChainOut, error) {
-		stdout, _, err := d.Exec.Run(ctx, "systemd-analyze", "critical-chain", "--no-pager")
+		Description: "The chain of units that gated boot, walking After= dependencies " +
+			"back from the default target, at each level picking the predecessor with " +
+			"the latest ActiveEnter timestamp (i.e. the bottleneck on that hop).",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ bootCriticalChainIn) (*mcp.CallToolResult, bootCriticalChainOut, error) {
+		m, err := sysd.Open()
 		if err != nil {
-			return nil, bootCriticalChainOut{}, fmt.Errorf("systemd-analyze critical-chain: %w", err)
+			return nil, bootCriticalChainOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		raw := string(stdout)
-		units := parseCriticalChain(raw)
-		return textResult("critical-chain: %d unit(s)", len(units)),
-			bootCriticalChainOut{Units: units, Raw: raw}, nil
+		defer m.Close()
+		target, err := m.DefaultTarget()
+		if err != nil {
+			return nil, bootCriticalChainOut{}, err
+		}
+		chain, err := walkCriticalChain(m, target)
+		if err != nil {
+			return nil, bootCriticalChainOut{}, err
+		}
+		return textResult("critical-chain: %d unit(s) (default %s)", len(chain), target),
+			bootCriticalChainOut{Default: target, Units: chain}, nil
 	})
 }
 
-// ---------- parsers (kept pure so they can be unit-tested) -------------------
-
-// durRE matches one or more composite tokens (e.g. "5.219s", "1min 23.456s")
-// without consuming trailing whitespace.
-const durRE = `[0-9]+(?:\.[0-9]+)?(?:y|month|w|d|h|min|ms|s)(?:\s+[0-9]+(?:\.[0-9]+)?(?:y|month|w|d|h|min|ms|s))*`
-
-var (
-	// "5.219s (firmware)" / "234ms (loader)" / "1min 23.456s (userspace)".
-	segmentRE = regexp.MustCompile(`(` + durRE + `)\s+\(([a-z]+)\)`)
-	// "= 19.935s" (total, after the chain of segments).
-	totalRE = regexp.MustCompile(`=\s+(` + durRE + `)`)
-	// "multi-user.target reached after 12.123s in userspace."
-	targetRE = regexp.MustCompile(`(\S+\.target)\s+reached after\s+(` + durRE + `)\s+in (?:userspace|initrd)`)
-	// Units inside critical-chain tree lines: "<name> @<active> [+<startup>]".
-	chainUnitRE = regexp.MustCompile(`([A-Za-z0-9@:_.\-]+\.(?:target|service|socket|timer|mount|swap|path|slice|scope|device))(?:\s+@(` + durRE + `))?(?:\s+\+(` + durRE + `))?`)
-)
-
-func parseBootTime(s string) bootTimeOut {
-	out := bootTimeOut{Raw: s}
-	for _, m := range segmentRE.FindAllStringSubmatch(s, -1) {
-		secs, ok := parseDurationSecs(m[1])
-		if !ok {
-			continue
-		}
-		switch m[2] {
-		case "firmware":
-			out.FirmwareSec = secs
-		case "loader":
-			out.LoaderSec = secs
-		case "kernel":
-			out.KernelSec = secs
-		case "initrd":
-			out.InitrdSec = secs
-		case "userspace":
-			out.UserspaceSec = secs
-		}
+// composeBootTime converts raw monotonic-microsecond timestamps into the
+// per-phase seconds that systemd-analyze prints. Kept pure so it can be
+// unit-tested without a live bus.
+func composeBootTime(bt sysd.BootTimes) bootTimeOut {
+	out := bootTimeOut{}
+	// FirmwareTimestampMonotonic and LoaderTimestampMonotonic are stored as
+	// the number of microseconds the phase ended BEFORE kernel boot (uint64,
+	// 0 = phase didn't happen / not recorded). Firmware ran before the
+	// loader, so firmware time is the part not covered by the loader.
+	if bt.FirmwareMonotonicUsec > bt.LoaderMonotonicUsec {
+		out.FirmwareSec = float64(bt.FirmwareMonotonicUsec-bt.LoaderMonotonicUsec) / 1e6
 	}
-	if m := totalRE.FindStringSubmatch(s); m != nil {
-		if secs, ok := parseDurationSecs(m[1]); ok {
-			out.TotalSec = secs
-		}
+	if bt.LoaderMonotonicUsec > 0 {
+		out.LoaderSec = float64(bt.LoaderMonotonicUsec) / 1e6
 	}
-	if m := targetRE.FindStringSubmatch(s); m != nil {
-		out.TargetReached = m[1]
-		if secs, ok := parseDurationSecs(m[2]); ok {
-			out.TargetReachedSec = secs
+	// Kernel = time from kernel boot to either initrd start (when present)
+	// or userspace start (when no initrd was used).
+	if bt.InitRDMonotonicUsec > 0 {
+		out.KernelSec = float64(bt.InitRDMonotonicUsec) / 1e6
+		if bt.UserspaceMonotonicUsec > bt.InitRDMonotonicUsec {
+			out.InitrdSec = float64(bt.UserspaceMonotonicUsec-bt.InitRDMonotonicUsec) / 1e6
 		}
+	} else if bt.UserspaceMonotonicUsec > 0 {
+		out.KernelSec = float64(bt.UserspaceMonotonicUsec) / 1e6
 	}
+	if bt.FinishMonotonicUsec > bt.UserspaceMonotonicUsec {
+		out.UserspaceSec = float64(bt.FinishMonotonicUsec-bt.UserspaceMonotonicUsec) / 1e6
+	}
+	out.TotalSec = out.FirmwareSec + out.LoaderSec + out.KernelSec + out.InitrdSec + out.UserspaceSec
 	return out
 }
 
-func parseBlame(s string) []blameEntry {
-	var out []blameEntry
-	for _, line := range strings.Split(s, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		fields := strings.Fields(trimmed)
-		if len(fields) < 2 {
-			continue
-		}
-		unit := fields[len(fields)-1]
-		durStr := strings.Join(fields[:len(fields)-1], " ")
-		secs, ok := parseDurationSecs(durStr)
-		if !ok {
-			continue
-		}
-		out = append(out, blameEntry{Unit: unit, InitSeconds: secs})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].InitSeconds > out[j].InitSeconds
-	})
-	return out
-}
-
-func parseCriticalChain(s string) []chainEntry {
+// walkCriticalChain starts at the default target and at each step picks the
+// predecessor (by After=) that became active latest. Stops at a unit with no
+// After= deps, when we revisit a unit, or after a hard depth limit.
+func walkCriticalChain(m *sysd.Manager, start string) ([]chainEntry, error) {
+	const maxDepth = 32
+	visited := map[string]struct{}{}
 	var out []chainEntry
-	for _, line := range strings.Split(s, "\n") {
-		m := chainUnitRE.FindStringSubmatch(line)
-		if m == nil {
-			continue
+	cur := start
+	for i := 0; i < maxDepth; i++ {
+		if _, seen := visited[cur]; seen {
+			break
 		}
-		e := chainEntry{Unit: m[1]}
-		if m[2] != "" {
-			if v, ok := parseDurationSecs(m[2]); ok {
-				e.ActiveAtSeconds = v
-			}
+		visited[cur] = struct{}{}
+		path, err := m.GetUnit(cur)
+		if err != nil {
+			return out, err
 		}
-		if m[3] != "" {
-			if v, ok := parseDurationSecs(m[3]); ok {
-				e.StartupSeconds = v
-			}
+		t, err := m.UnitTimings(path, cur)
+		if err != nil {
+			return out, err
 		}
-		out = append(out, e)
-	}
-	return out
-}
-
-// parseDurationSecs accepts the composite duration forms systemd-analyze emits:
-// "234ms", "1.234s", "1min 23.456s", "2h 3min 4s". Returns total seconds.
-// Unknown suffixes (e.g. "y", "month") are tolerated but contribute 0 — boot
-// timings should never reach those scales, and if they do the user can read
-// the Raw field directly.
-func parseDurationSecs(s string) (float64, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, false
-	}
-	var total float64
-	seen := false
-	for _, f := range strings.Fields(s) {
-		mult, num, ok := splitDuration(f)
-		if !ok {
-			return 0, false
+		out = append(out, chainEntry{
+			Unit:            cur,
+			ActiveAtSeconds: float64(t.ActiveEnterMonotonicUsec) / 1e6,
+			StartupSeconds:  float64(t.StartupUsec()) / 1e6,
+		})
+		after, err := m.UnitAfter(path)
+		if err != nil || len(after) == 0 {
+			break
 		}
-		total += num * mult
-		seen = true
-	}
-	return total, seen
-}
-
-func splitDuration(f string) (mult, num float64, ok bool) {
-	// Order matters: "ms" must be checked before "s", "min" before "n", etc.
-	suffixes := []struct {
-		s    string
-		mult float64
-	}{
-		{"ms", 0.001},
-		{"min", 60},
-		{"month", 30 * 24 * 3600},
-		{"s", 1},
-		{"h", 3600},
-		{"d", 24 * 3600},
-		{"w", 7 * 24 * 3600},
-		{"y", 365 * 24 * 3600},
-	}
-	for _, suf := range suffixes {
-		if strings.HasSuffix(f, suf.s) {
-			v, err := strconv.ParseFloat(strings.TrimSuffix(f, suf.s), 64)
+		// Pick the predecessor with the latest ActiveEnter — that's the unit
+		// systemd was waiting on at this hop.
+		var nextName string
+		var nextWhen uint64
+		for _, name := range after {
+			p, err := m.GetUnit(name)
 			if err != nil {
-				return 0, 0, false
+				continue
 			}
-			return suf.mult, v, true
+			pt, err := m.UnitTimings(p, name)
+			if err != nil {
+				continue
+			}
+			if pt.ActiveEnterMonotonicUsec > nextWhen {
+				nextWhen = pt.ActiveEnterMonotonicUsec
+				nextName = name
+			}
 		}
+		if nextName == "" {
+			break
+		}
+		cur = nextName
 	}
-	return 0, 0, false
+	return out, nil
 }

@@ -2,19 +2,21 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/gjolly/fleetmind/internal/sysd"
 )
 
 // -------- list_systemd_units ------------------------------------------------
 
 type listUnitsIn struct {
 	State string `json:"state,omitempty" jsonschema:"filter by active state: active|inactive|failed|activating|deactivating|reloading"`
-	Type  string `json:"type,omitempty" jsonschema:"filter by unit type: service|timer|socket|mount|target|path|swap|slice|scope|device"`
+	Type  string `json:"type,omitempty" jsonschema:"filter by unit type suffix: service|timer|socket|mount|target|path|swap|slice|scope|device|automount"`
 	Limit int    `json:"limit,omitempty" jsonschema:"max number of units to return (default 500, max 2000)"`
 }
 
@@ -48,27 +50,13 @@ type unitStatusOut struct {
 
 type listTimersIn struct{}
 
-// systemdTimer mirrors `systemctl list-timers --output=json` entries. The
-// next/left/last/passed fields are emitted as numbers (microseconds since the
-// Unix epoch; 0 means "never"), not strings — verified against systemd v255.
 type systemdTimer struct {
-	NextMicros   int64  `json:"next_micros"`
-	LeftMicros   int64  `json:"left_micros"`
-	LastMicros   int64  `json:"last_micros"`
-	PassedMicros int64  `json:"passed_micros"`
-	Unit         string `json:"unit"`
-	Activates    string `json:"activates"`
-}
-
-// rawSystemdTimer is the on-the-wire shape. Mapped into systemdTimer before
-// returning so the public field names are explicit about the microsecond unit.
-type rawSystemdTimer struct {
-	Next      int64  `json:"next"`
-	Left      int64  `json:"left"`
-	Last      int64  `json:"last"`
-	Passed    int64  `json:"passed"`
-	Unit      string `json:"unit"`
-	Activates string `json:"activates"`
+	Unit                     string `json:"unit"`
+	Activates                string `json:"activates"`
+	NextElapseMonotonicUsec  uint64 `json:"next_elapse_monotonic_usec,omitempty"`
+	NextElapseRealtimeUsec   uint64 `json:"next_elapse_realtime_usec,omitempty"`
+	LastTriggerUsec          uint64 `json:"last_trigger_usec,omitempty"`
+	LastTriggerMonotonicUsec uint64 `json:"last_trigger_monotonic_usec,omitempty"`
 }
 
 type listTimersOut struct {
@@ -78,24 +66,33 @@ type listTimersOut struct {
 
 // ---------------------------------------------------------------------------
 
+// allowedUnitStates / allowedUnitTypes keep the filter inputs explicit; the
+// D-Bus surface itself doesn't validate, so we do it here.
+var (
+	allowedUnitStates = map[string]bool{
+		"active": true, "inactive": true, "failed": true,
+		"activating": true, "deactivating": true, "reloading": true,
+	}
+	allowedUnitTypes = map[string]bool{
+		"service": true, "timer": true, "socket": true, "mount": true,
+		"target": true, "path": true, "swap": true, "slice": true,
+		"scope": true, "device": true, "automount": true,
+	}
+)
+
 func registerSystemd(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "list_systemd_units",
-		Description: "All loaded systemd units (`systemctl list-units --output=json`) with " +
-			"optional state/type filters. Default cap is 500 entries — narrow with `state` " +
-			"(e.g. \"failed\") or `type` (e.g. \"service\", \"timer\") for focused triage.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listUnitsIn) (*mcp.CallToolResult, listUnitsOut, error) {
-		args, err := listUnitsArgs(in)
-		if err != nil {
-			return nil, listUnitsOut{}, err
+		Description: "All loaded systemd units (via Manager.ListUnits over D-Bus) with " +
+			"optional state/type filters. Default cap is 500 entries — narrow with " +
+			"`state` (e.g. \"failed\") or `type` (e.g. \"service\", \"timer\") for focused " +
+			"triage.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in listUnitsIn) (*mcp.CallToolResult, listUnitsOut, error) {
+		if in.State != "" && !allowedUnitStates[in.State] {
+			return nil, listUnitsOut{}, fmt.Errorf("invalid state %q", in.State)
 		}
-		stdout, _, err := d.Exec.Run(ctx, "systemctl", args...)
-		if err != nil {
-			return nil, listUnitsOut{}, fmt.Errorf("systemctl list-units: %w", err)
-		}
-		var parsed []systemdUnit
-		if err := json.Unmarshal(stdout, &parsed); err != nil {
-			return nil, listUnitsOut{}, fmt.Errorf("parse systemctl JSON: %w", err)
+		if in.Type != "" && !allowedUnitTypes[in.Type] {
+			return nil, listUnitsOut{}, fmt.Errorf("invalid type %q", in.Type)
 		}
 		limit := in.Limit
 		if limit <= 0 {
@@ -104,17 +101,45 @@ func registerSystemd(s *mcp.Server, d Deps) {
 		if limit > 2000 {
 			return nil, listUnitsOut{}, fmt.Errorf("limit must be <= 2000, got %d", limit)
 		}
-		if len(parsed) > limit {
-			parsed = parsed[:limit]
+		m, err := sysd.Open()
+		if err != nil {
+			return nil, listUnitsOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		return textResult("%d unit(s) matched", len(parsed)),
-			listUnitsOut{Count: len(parsed), Units: parsed}, nil
+		defer m.Close()
+		raw, err := m.ListUnits()
+		if err != nil {
+			return nil, listUnitsOut{}, err
+		}
+		out := listUnitsOut{Units: make([]systemdUnit, 0, len(raw))}
+		typeSuffix := ""
+		if in.Type != "" {
+			typeSuffix = "." + in.Type
+		}
+		for _, u := range raw {
+			if in.State != "" && u.ActiveState != in.State {
+				continue
+			}
+			if typeSuffix != "" && !strings.HasSuffix(u.Name, typeSuffix) {
+				continue
+			}
+			out.Units = append(out.Units, systemdUnit{
+				Unit: u.Name, Load: u.LoadState, Active: u.ActiveState,
+				Sub: u.SubState, Description: u.Description,
+			})
+		}
+		sort.SliceStable(out.Units, func(i, j int) bool { return out.Units[i].Unit < out.Units[j].Unit })
+		if len(out.Units) > limit {
+			out.Units = out.Units[:limit]
+		}
+		out.Count = len(out.Units)
+		return textResult("%d unit(s) matched", out.Count), out, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "unit_status",
-		Description: "Detail view of a single systemd unit: every property `systemctl show` " +
-			"reports, plus a tail of the unit's recent journal. Requires log-observe for journal.",
+		Description: "Detail view of a single systemd unit: every property the unit " +
+			"publishes on org.freedesktop.systemd1.Unit, plus a tail of the unit's recent " +
+			"journal (best-effort; requires log-observe).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in unitStatusIn) (*mcp.CallToolResult, unitStatusOut, error) {
 		if !unitRE.MatchString(in.Unit) {
 			return nil, unitStatusOut{}, fmt.Errorf("invalid unit name %q", in.Unit)
@@ -126,17 +151,28 @@ func registerSystemd(s *mcp.Server, d Deps) {
 		if jLines > 500 {
 			return nil, unitStatusOut{}, fmt.Errorf("journal_lines must be <= 500, got %d", jLines)
 		}
-		showOut, _, err := d.Exec.Run(ctx, "systemctl", "show", "--no-pager", in.Unit)
+		m, err := sysd.Open()
 		if err != nil {
-			return nil, unitStatusOut{}, fmt.Errorf("systemctl show %s: %w", in.Unit, err)
+			return nil, unitStatusOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		props := parseSystemctlShow(string(showOut))
-		// Journal is best-effort — log-observe may not be connected.
-		jOut, _, jErr := d.Exec.Run(ctx, "journalctl", "--no-pager", "-o", "short-iso",
-			"-n", strconv.Itoa(jLines), "--unit", in.Unit)
+		defer m.Close()
+		path, err := m.LoadUnit(in.Unit)
+		if err != nil {
+			return nil, unitStatusOut{}, err
+		}
+		props, err := m.UnitPropertiesAll(path, "org.freedesktop.systemd1.Unit")
+		if err != nil {
+			return nil, unitStatusOut{}, err
+		}
+		// Journal is still pulled via journalctl — log-observe makes journalctl
+		// work; no D-Bus involved on that side.
 		journal := ""
-		if jErr == nil {
-			journal = string(jOut)
+		if d.Exec != nil {
+			jOut, _, jErr := d.Exec.Run(ctx, "journalctl", "--no-pager", "-o", "short-iso",
+				"-n", strconv.Itoa(jLines), "--unit", in.Unit)
+			if jErr == nil {
+				journal = string(jOut)
+			}
 		}
 		summary := props["ActiveState"]
 		if sub := props["SubState"]; sub != "" {
@@ -148,71 +184,37 @@ func registerSystemd(s *mcp.Server, d Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "list_timers",
-		Description: "All systemd timers (`systemctl list-timers --output=json`): next/last " +
-			"fire times and the unit each one activates.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listTimersIn) (*mcp.CallToolResult, listTimersOut, error) {
-		stdout, _, err := d.Exec.Run(ctx, "systemctl", "list-timers", "--no-pager", "--all", "--output=json")
+		Description: "All loaded systemd timer units with their scheduling timestamps " +
+			"(next/last elapse, monotonic & realtime). Reads org.freedesktop.systemd1.Timer " +
+			"properties over D-Bus.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listTimersIn) (*mcp.CallToolResult, listTimersOut, error) {
+		m, err := sysd.Open()
 		if err != nil {
-			return nil, listTimersOut{}, fmt.Errorf("systemctl list-timers: %w", err)
+			return nil, listTimersOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		var raw []rawSystemdTimer
-		if err := json.Unmarshal(stdout, &raw); err != nil {
-			return nil, listTimersOut{}, fmt.Errorf("parse systemctl JSON: %w", err)
+		defer m.Close()
+		raw, err := m.ListUnits()
+		if err != nil {
+			return nil, listTimersOut{}, err
 		}
-		parsed := make([]systemdTimer, len(raw))
-		for i, r := range raw {
-			parsed[i] = systemdTimer{
-				NextMicros: r.Next, LeftMicros: r.Left,
-				LastMicros: r.Last, PassedMicros: r.Passed,
-				Unit: r.Unit, Activates: r.Activates,
+		out := listTimersOut{Timers: make([]systemdTimer, 0)}
+		for _, u := range raw {
+			if !strings.HasSuffix(u.Name, ".timer") {
+				continue
 			}
+			info, _ := m.TimerProperties(u.Path)
+			activates, _ := m.TriggersUnit(u.Path)
+			out.Timers = append(out.Timers, systemdTimer{
+				Unit:                     u.Name,
+				Activates:                activates,
+				NextElapseMonotonicUsec:  info.NextElapseMonotonicUsec,
+				NextElapseRealtimeUsec:   info.NextElapseRealtimeUsec,
+				LastTriggerUsec:          info.LastTriggerUsec,
+				LastTriggerMonotonicUsec: info.LastTriggerMonotonicUsec,
+			})
 		}
-		return textResult("%d timer(s)", len(parsed)),
-			listTimersOut{Count: len(parsed), Timers: parsed}, nil
+		sort.SliceStable(out.Timers, func(i, j int) bool { return out.Timers[i].Unit < out.Timers[j].Unit })
+		out.Count = len(out.Timers)
+		return textResult("%d timer(s)", out.Count), out, nil
 	})
-}
-
-// listUnitsArgs builds the systemctl argv. Kept pure for unit-testing.
-func listUnitsArgs(in listUnitsIn) ([]string, error) {
-	args := []string{"list-units", "--no-pager", "--all", "--output=json"}
-	if in.State != "" {
-		allowed := map[string]bool{
-			"active": true, "inactive": true, "failed": true,
-			"activating": true, "deactivating": true, "reloading": true,
-		}
-		if !allowed[in.State] {
-			return nil, fmt.Errorf("invalid state %q", in.State)
-		}
-		args = append(args, "--state="+in.State)
-	}
-	if in.Type != "" {
-		allowed := map[string]bool{
-			"service": true, "timer": true, "socket": true, "mount": true,
-			"target": true, "path": true, "swap": true, "slice": true,
-			"scope": true, "device": true, "automount": true,
-		}
-		if !allowed[in.Type] {
-			return nil, fmt.Errorf("invalid type %q", in.Type)
-		}
-		args = append(args, "--type="+in.Type)
-	}
-	return args, nil
-}
-
-// parseSystemctlShow consumes the Key=Value\n stream `systemctl show` emits
-// and returns a flat string map. Values that contain '=' are preserved
-// verbatim after the first delimiter.
-func parseSystemctlShow(s string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(s, "\n") {
-		if line == "" {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		out[k] = v
-	}
-	return out
 }
