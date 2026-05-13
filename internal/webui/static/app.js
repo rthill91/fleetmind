@@ -82,205 +82,11 @@ function setStatus(elem, state, text) {
   elem.textContent = text;
 }
 
-// ---- settings panel wiring ----
-
-function initSettings() {
-  const s = settings.load();
-
-  $("#token").value = s.token;
-  $("#llm-provider").value = s.provider;
-  $("#llm-base-url").value =
-    s.baseUrl || PROVIDER_DEFAULTS[s.provider]?.baseUrl || "";
-  $("#llm-model").value =
-    s.model || PROVIDER_DEFAULTS[s.provider]?.model || "";
-  $("#llm-api-key").value = s.apiKey;
-
-  $("#llm-provider").addEventListener("change", (e) => {
-    const provider = e.target.value;
-    const defaults = PROVIDER_DEFAULTS[provider] || { baseUrl: "", model: "" };
-    // Only overwrite the fields if the user hasn't customised them.
-    if (!$("#llm-base-url").value) $("#llm-base-url").value = defaults.baseUrl;
-    if (!$("#llm-model").value) $("#llm-model").value = defaults.model;
-  });
-
-  $("#token-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    settings.save({ token: $("#token").value.trim() });
-    setStatus($("#token-status"), "ok", "saved");
-    // Connecting the SSE/fleet stream now that we have a token.
-    fleet.connect();
-  });
-
-  $("#token-test").addEventListener("click", async () => {
-    settings.save({ token: $("#token").value.trim() });
-    setStatus($("#token-status"), "working", "testing");
-    try {
-      const ok = await fleet.testToken();
-      setStatus(
-        $("#token-status"),
-        ok ? "ok" : "bad",
-        ok ? "ok" : "unauthorized",
-      );
-      if (ok) fleet.connect();
-    } catch (err) {
-      setStatus($("#token-status"), "bad", err.message || "error");
-    }
-  });
-
-  $("#llm-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    settings.save({
-      provider: $("#llm-provider").value,
-      baseUrl: $("#llm-base-url").value.trim(),
-      model: $("#llm-model").value.trim(),
-      apiKey: $("#llm-api-key").value,
-    });
-    setStatus($("#token-status"), "ok", "llm saved");
-  });
-}
-
-function currentLLM() {
-  const s = settings.load();
-  const baseUrl = s.baseUrl || PROVIDER_DEFAULTS[s.provider]?.baseUrl || "";
-  const model = s.model || PROVIDER_DEFAULTS[s.provider]?.model || "";
-  return { provider: s.provider, baseUrl, model, apiKey: s.apiKey };
-}
-
-function currentToken() {
-  return ($("#token").value || settings.load().token).trim();
-}
-
-// ---- fleet roster + live SSE ----
-
-const fleet = (() => {
-  const known = new Map(); // node_id → Peer
-  let stream = null;
-  let streamAbort = null;
-  let heartbeatTimer = null;
-
-  function render() {
-    const list = $("#nodes-list");
-    const empty = $("#nodes-empty");
-    list.innerHTML = "";
-    if (known.size === 0) {
-      $("#nodes-count").textContent = "—";
-      return;
-    }
-    empty.classList.add("hidden");
-    $("#nodes-count").textContent = `${known.size} node${known.size === 1 ? "" : "s"}`;
-    const peers = [...known.values()].sort((a, b) =>
-      a.node_id.localeCompare(b.node_id),
-    );
-    for (const p of peers) {
-      list.appendChild(renderCard(p));
-    }
-  }
-
-  function renderCard(p) {
-    const age = ageSeconds(p.last_heartbeat);
-    let state = "ok";
-    if (age > 30) state = "bad";
-    else if (age > 15) state = "warn";
-    return el(
-      "li",
-      { class: "node-card" },
-      el(
-        "div",
-        { class: "row" },
-        el("span", { class: "id" }, p.node_id.slice(0, 12)),
-        el(
-          "span",
-          { class: "heartbeat", dataset: { state } },
-          `${Math.round(age)}s`,
-        ),
-      ),
-      el("div", { class: "url" }, p.advertise_url),
-      el(
-        "div",
-        { class: "meta" },
-        `v${p.version || "?"} · ${(p.tools || []).length} tools`,
-      ),
-    );
-  }
-
-  function ageSeconds(iso) {
-    if (!iso) return 999;
-    const t = Date.parse(iso);
-    if (Number.isNaN(t)) return 999;
-    return (Date.now() - t) / 1000;
-  }
-
-  async function testToken() {
-    const token = currentToken();
-    if (!token) throw new Error("no token");
-    const res = await fetch("/healthz", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return res.ok;
-  }
-
-  async function loadInitial() {
-    const token = currentToken();
-    if (!token) return;
-    try {
-      const res = await fetch("/fleet/peers", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status === 404) {
-        // Fleet mode disabled — show the empty-state copy.
-        known.clear();
-        $("#nodes-empty").classList.remove("hidden");
-        render();
-        return;
-      }
-      if (!res.ok) {
-        throw new Error(`/fleet/peers → ${res.status}`);
-      }
-      const body = await res.json();
-      known.clear();
-      for (const p of body.peers || []) {
-        known.set(p.node_id, p);
-      }
-      render();
-    } catch (err) {
-      console.warn("loadInitial:", err);
-    }
-  }
-
-  async function connect() {
-    disconnect();
-    const token = currentToken();
-    if (!token) return;
-    await loadInitial();
-
-    // EventSource cannot set Authorization, so we hand-parse SSE over fetch.
-    streamAbort = new AbortController();
-    try {
-      const res = await fetch("/fleet/events", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "text/event-stream",
-        },
-        signal: streamAbort.signal,
-      });
-      if (res.status === 404) {
-        // Fleet mode disabled — surface the same hint.
-        $("#nodes-empty").classList.remove("hidden");
-        return;
-      }
-      if (!res.ok) {
-        console.warn("/fleet/events", res.status);
-        return;
-      }
-      stream = res.body.getReader();
-      parseSSE(stream);
-    } catch (err) {
-      if (err.name !== "AbortError") console.warn("fleet stream:", err);
-    }
-
-    // Refresh heartbeat ages so the pills change colour even when no events
-    // arrive (e.g. a totally idle solo fleet).
-    heartbeatTimer = setInterval(render, 5000);
+    // Periodically re-fetch peer data so status stays accurate even if the
+    // SSE stream drops silently or heartbeats lag.
+    heartbeatTimer = setInterval(() => {
+      loadInitial();
+    }, 5000);
   }
 
   function disconnect() {
@@ -445,7 +251,12 @@ const chat = (() => {
   let busy = false;
 
   function appendBubble(role, text) {
-    const node = el("div", { class: `bubble ${role}` }, text);
+    const node = el("div", { class: `bubble ${role}` });
+    if (role === "assistant") {
+      node.innerHTML = renderMarkdown(text);
+    } else {
+      node.textContent = text;
+    }
     $("#chat-transcript").appendChild(node);
     scrollToEnd();
     return node;
@@ -721,7 +532,7 @@ function initChat() {
   });
 
   input.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       form.requestSubmit();
     }
