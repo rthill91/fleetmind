@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/gjolly/fleetmind/internal/aptdb"
 	"github.com/gjolly/fleetmind/internal/exectool"
 	"github.com/gjolly/fleetmind/internal/fleet"
 	"github.com/gjolly/fleetmind/internal/procfs"
@@ -22,6 +23,7 @@ type Deps struct {
 	Exec   *exectool.Runner
 	ProcFS procfs.Root
 	SysFS  sysfs.Root
+	AptDB  aptdb.Root
 	Logger *slog.Logger
 	// Fleet is the local fleet registry. Nil when fleet mode is disabled —
 	// list_fleet and fleet_query are still registered but report disabled.
@@ -59,6 +61,9 @@ var AllToolNames = []string{
 	"list_systemd_units",
 	"unit_status",
 	"list_timers",
+	"apt_update_status",
+	"list_upgradable_packages",
+	"list_installed_packages",
 	"list_fleet",
 	"fleet_query",
 }
@@ -80,6 +85,7 @@ func RegisterAll(s *mcp.Server, d Deps) {
 	registerLogs(s, d)
 	registerBoot(s, d)
 	registerSystemd(s, d)
+	registerApt(s, d)
 	registerFleet(s, d)
 	registerFleetQuery(s, d)
 }
