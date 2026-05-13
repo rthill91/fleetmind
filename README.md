@@ -72,13 +72,14 @@ sudo snap restart fleetmind
 
 ## Wiring into an MCP client
 
-Add an entry that points at the running server, e.g. for an HTTP-aware client:
+Generic config block for any Streamable-HTTP-aware MCP client
+(`~/.claude.json`, `.mcp.json`, Cursor `mcp.json`, etc.):
 
 ```json
 {
   "mcpServers": {
     "fleetmind": {
-      "transport": "streamable-http",
+      "type": "http",
       "url": "http://127.0.0.1:8765/mcp",
       "headers": {
         "Authorization": "Bearer <token from `snap get fleetmind token`>"
@@ -87,6 +88,60 @@ Add an entry that points at the running server, e.g. for an HTTP-aware client:
   }
 }
 ```
+
+### Claude Code
+
+Add with the CLI in one shot (project-scoped, writes to `.mcp.json`):
+
+```sh
+claude mcp add --transport http --scope project fleetmind \
+  http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer $(sudo snap get fleetmind token)"
+```
+
+Swap `--scope project` for `--scope user` to register it globally.
+Run `/mcp` inside Claude Code to verify the connection and inspect the
+tool list.
+
+#### Allow-listing the tools
+
+Every FleetMind tool is read-only by snap confinement, so it is safe to
+pre-approve the whole server and skip per-call permission prompts. Add
+to `.claude/settings.json` (project) or `~/.claude/settings.json`
+(global):
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__fleetmind"]
+  }
+}
+```
+
+`mcp__fleetmind` covers every current and future tool on this server.
+For a tighter grant, list specific tools: `mcp__fleetmind__read_journal`.
+
+#### Teaching the agent when to reach for FleetMind
+
+Drop a paragraph into your project or user `CLAUDE.md` so Claude
+prefers these tools over shelling out. Example:
+
+```md
+## FleetMind MCP
+
+When the user asks about the local Linux host (hardware, processes,
+mounts, network, logs, sensors, kernel), prefer the fleetmind MCP
+tools over running shell commands. They are strictly read-only.
+
+- "what's running?"            → list_processes
+- "why is disk full?"          → list_mounts, list_block_devices
+- "any kernel errors lately?"  → read_dmesg, read_journal {priority:"err"}
+- "what hardware is this?"     → list_dmi, list_pci_devices, cpu_info
+```
+
+For recurring workflows, bundle them into a slash command — e.g.
+`.claude/commands/host-audit.md` that asks the agent to run a fixed
+sequence of FleetMind tools and format a report.
 
 ## Threat model
 
