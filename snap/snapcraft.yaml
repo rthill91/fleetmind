@@ -33,6 +33,7 @@ apps:
     install-mode: enable
     restart-condition: on-failure
     plugs:
+      - network
       - network-bind
       - hardware-observe
       - system-observe
