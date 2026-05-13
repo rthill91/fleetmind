@@ -52,6 +52,24 @@ curl -s -H 'Authorization: Bearer devtoken' \
      http://127.0.0.1:8765/mcp | head
 ```
 
+## Testing
+
+Unit tests cover the `/proc` and `/sys` parsers, auth middleware, and helper
+functions. Integration tests live in `e2e/` and exercise the full MCP stack
+(auth, transport, tool registry, and real host observability) on a live Linux
+system.
+
+```sh
+# Fast unit tests
+go test -race -count=1 ./...
+
+# Integration tests (Linux only; starts an ephemeral in-process server)
+go test -v -timeout=120s ./e2e/...
+```
+
+See [`e2e/README.md`](e2e/README.md) for architecture details and instructions
+for running inside an LXD system container.
+
 ## Building the snap
 
 ```sh
@@ -163,6 +181,7 @@ sequence of FleetMind tools and format a report.
 
 ```
 cmd/fleetmind          program entrypoint
+e2e/                   integration tests (MCP client/server round-trip)
 internal/mcpserver     server wiring, bearer auth, token bootstrap
 internal/tools         one file per MCP tool, plus the registry
 internal/exectool      safe wrapper around os/exec

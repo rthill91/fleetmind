@@ -24,6 +24,9 @@ import (
 type Config struct {
 	BindHost string
 	Port     int
+	// Listener, if set, overrides BindHost:Port. Used by tests that need an
+	// ephemeral port.
+	Listener net.Listener
 	Token    string
 	Version  string
 	Logger   *slog.Logger
@@ -85,6 +88,9 @@ func New(cfg Config) *Server {
 	})
 
 	addr := net.JoinHostPort(cfg.BindHost, fmt.Sprintf("%d", cfg.Port))
+	if cfg.Listener != nil {
+		addr = cfg.Listener.Addr().String()
+	}
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -98,13 +104,22 @@ func New(cfg Config) *Server {
 	return &Server{cfg: cfg, mcp: mcpSrv, http: httpSrv, logger: cfg.Logger}
 }
 
+// Addr returns the resolved listen address. Only meaningful after Serve has
+// been called (or if a Listener was provided in Config).
+func (s *Server) Addr() string { return s.http.Addr }
+
 // Serve binds the listener and blocks until ctx is cancelled. The HTTP server
 // is shut down gracefully with a 5-second grace period.
 func (s *Server) Serve(ctx context.Context) error {
 	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.Info("listening", "addr", s.http.Addr, "endpoint", "/mcp")
-		err := s.http.ListenAndServe()
+		var err error
+		if s.cfg.Listener != nil {
+			err = s.http.Serve(s.cfg.Listener)
+		} else {
+			err = s.http.ListenAndServe()
+		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			listenErr <- err
 			return

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: go test -race -count=1 ./...
+
+  e2e:
+    name: E2E tests (LXD)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install and initialise LXD
+        run: |
+          sudo snap install lxd
+          sudo lxd init --auto
+
+      - name: Launch system container
+        run: |
+          sudo lxc launch ubuntu:24.04 fleetmind-e2e --ephemeral
+          # Wait for systemd to become ready (timeout after 60s).
+          sudo lxc exec fleetmind-e2e -- bash -c \
+            'timeout 60 bash -c "until systemctl is-system-running >/dev/null 2>&1; do sleep 2; done"' || {
+              echo "Warning: systemd did not reach running state; continuing anyway"
+            }
+
+      - name: Build test binary on host
+        run: go test -c ./e2e -o fleetmind-e2e.test
+
+      - name: Push and run E2E tests inside container
+        run: |
+          sudo lxc exec fleetmind-e2e -- mkdir -p /root
+          sudo lxc file push fleetmind-e2e.test fleetmind-e2e/root/
+          sudo lxc exec fleetmind-e2e -- chmod +x /root/fleetmind-e2e.test
+          # The e2e tests need /proc and /sys which are present in any LXD system container.
+          sudo lxc exec fleetmind-e2e -- /root/fleetmind-e2e.test -test.v -test.timeout=120s
+
+      - name: Cleanup container
+        if: always()
+        run: sudo lxc stop fleetmind-e2e --force || true
