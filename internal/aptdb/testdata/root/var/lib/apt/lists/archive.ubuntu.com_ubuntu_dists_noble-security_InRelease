@@ -1,0 +1,19 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: Ubuntu
+Label: Ubuntu
+Suite: noble-security
+Version: 24.04
+Codename: noble
+Date: Thu, 01 May 2026 12:00:00 UTC
+Architectures: amd64
+Components: main
+Description: Ubuntu Noble Security Updates
+MD5Sum:
+ d41d8cd98f00b204e9800998ecf8427e            0 main/binary-amd64/Packages
+
+-----BEGIN PGP SIGNATURE-----
+
+iQGzBAEBCgAdFiEEdiCEPSE+1zSv5Xs8WLuiE2HRPaQFAmZxxxxxxxx
+-----END PGP SIGNATURE-----

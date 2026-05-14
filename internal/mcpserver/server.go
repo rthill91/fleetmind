@@ -16,9 +16,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/gjolly/fleetmind/internal/aptdb"
 	"github.com/gjolly/fleetmind/internal/exectool"
 	"github.com/gjolly/fleetmind/internal/fleet"
 	"github.com/gjolly/fleetmind/internal/procfs"
+	"github.com/gjolly/fleetmind/internal/snapconf"
 	"github.com/gjolly/fleetmind/internal/sysfs"
 	"github.com/gjolly/fleetmind/internal/tools"
 	"github.com/gjolly/fleetmind/internal/webui"
@@ -90,6 +92,7 @@ func New(cfg Config) (*Server, error) {
 		Exec:       exectool.NewRunner(),
 		ProcFS:     procfs.Default,
 		SysFS:      sysfs.Default,
+		AptDB:      aptDBRoot(),
 		Logger:     cfg.Logger,
 		Fleet:      fleetReg,
 		FleetToken: cfg.Token,
@@ -242,4 +245,15 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		return err
 	}
+}
+
+// aptDBRoot returns the filesystem root the apt tools should read from.
+// Inside a strictly-confined snap, /var/lib/dpkg and /var/lib/apt are not
+// exposed by the snap's mount namespace; the system-backup plug exposes the
+// host at /var/lib/snapd/hostfs instead.
+func aptDBRoot() aptdb.Root {
+	if snapconf.InSnap() {
+		return aptdb.NewRoot("/var/lib/snapd/hostfs")
+	}
+	return aptdb.Default
 }

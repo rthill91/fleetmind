@@ -1,0 +1,23 @@
+Package: bash
+Architecture: amd64
+Version: 5.2.21-2ubuntu4.1
+Priority: required
+Section: shells
+Filename: pool/main/b/bash/bash_5.2.21-2ubuntu4.1_amd64.deb
+Description: GNU Bourne Again SHell
+
+Package: linux-image-6.8.0-45-generic
+Architecture: amd64
+Version: 6.8.0-45.45
+Priority: optional
+Section: kernel
+Filename: pool/main/l/linux-signed/linux-image-6.8.0-45-generic_6.8.0-45.45_amd64.deb
+Description: Signed kernel image (no upgrade)
+
+Package: openssl
+Architecture: amd64
+Version: 3.0.13-0ubuntu3.5
+Priority: optional
+Section: utils
+Filename: pool/main/o/openssl/openssl_3.0.13-0ubuntu3.5_amd64.deb
+Description: Secure Sockets Layer toolkit

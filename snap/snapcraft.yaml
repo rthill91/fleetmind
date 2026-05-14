@@ -17,10 +17,11 @@ description: |
   Then point your MCP client at http://127.0.0.1:8765/mcp with header
   "Authorization: Bearer <token>".
 
-  Journal and kernel-log tools require manual interface connection:
+  Journal, kernel-log and apt tools require manual interface connection:
 
       sudo snap connect fleetmind:log-observe
       sudo snap connect fleetmind:kernel-module-observe
+      sudo snap connect fleetmind:system-backup
 
 license: Apache-2.0
 confinement: strict
@@ -41,6 +42,7 @@ apps:
       - network-observe
       - log-observe
       - kernel-module-observe
+      - system-backup
     slots:
       - systemd-bus
 

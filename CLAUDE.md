@@ -31,8 +31,9 @@ curl -sS -H 'Authorization: Bearer devtoken' http://127.0.0.1:18765/healthz
 
 ## Architecture rules
 
-- **Snap plugs are the safety boundary.** Only `*-observe` and `network-bind`.
-  Never add a `*-control` plug, `home`, or `system-files` write rules.
+- **Snap plugs are the safety boundary.** Only `*-observe`, `network-bind`,
+  and read-only host-fs plugs (`system-backup`). Never add a `*-control` plug,
+  `home`, or `system-files` write rules.
 - **All `os/exec` goes through `internal/exectool`.** Fixed argv, 10s timeout,
   4 MiB stdout cap, `LC_ALL=C`, hardcoded `PATH`. Do not call `exec` directly
   from tools.

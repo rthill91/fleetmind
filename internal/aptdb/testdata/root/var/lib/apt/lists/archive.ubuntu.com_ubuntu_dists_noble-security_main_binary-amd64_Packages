@@ -1,0 +1,7 @@
+Package: openssl
+Architecture: amd64
+Version: 3.0.13-0ubuntu3.5
+Priority: optional
+Section: utils
+Filename: pool/main/o/openssl/openssl_3.0.13-0ubuntu3.5_amd64.deb
+Description: Secure Sockets Layer toolkit (security)
