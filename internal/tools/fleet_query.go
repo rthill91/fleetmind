@@ -126,7 +126,7 @@ func peerCallTool(ctx context.Context, advertiseURL, token, toolName string, arg
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", advertiseURL, err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	if args == nil {
 		args = map[string]any{}
 	}

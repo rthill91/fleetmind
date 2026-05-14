@@ -3,7 +3,7 @@ BIN   := bin/fleetmind
 PKG   := ./...
 GOFLAGS ?=
 
-.PHONY: all build test lint fmt tidy snap clean help
+.PHONY: all build test lint check fmt tidy snap clean help
 
 all: build
 
@@ -16,6 +16,9 @@ test:
 
 lint:
 	golangci-lint run $(PKG)
+
+# Run before declaring a code change complete. Mirrors what CI enforces.
+check: lint test
 
 fmt:
 	gofumpt -l -w .

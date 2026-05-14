@@ -9,9 +9,14 @@ The security model is the codebase: **nothing here may ever mutate host state.**
 make build              # → bin/fleetmind
 make test               # go test -race ./...
 make lint               # golangci-lint v2 (config in .golangci.yml)
+make check              # lint + test — run before declaring a code change done
 make fmt                # gofumpt + goimports
 make snap               # snapcraft pack (slow; only when packaging)
 ```
+
+**`make check` must pass before any code change is considered complete.** CI
+runs the same lint config and test suite, so a green `make check` locally is
+the contract for "ready to push".
 
 For a local smoke test without the snap:
 

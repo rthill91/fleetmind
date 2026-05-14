@@ -170,7 +170,7 @@ func (m *Manager) UnitAfter(path dbus.ObjectPath) ([]string, error) {
 	obj := m.conn.Object(managerService, path)
 	var v dbus.Variant
 	if err := obj.Call(propsIface+".Get", 0, unitIface, "After").Store(&v); err != nil {
-		return nil, fmt.Errorf("Get After: %w", err)
+		return nil, fmt.Errorf("get After: %w", err)
 	}
 	var after []string
 	if err := v.Store(&after); err != nil {
@@ -253,7 +253,7 @@ func (m *Manager) TriggersUnit(path dbus.ObjectPath) (string, error) {
 	obj := m.conn.Object(managerService, path)
 	var v dbus.Variant
 	if err := obj.Call(propsIface+".Get", 0, unitIface, "Triggers").Store(&v); err != nil {
-		return "", fmt.Errorf("Get Triggers: %w", err)
+		return "", fmt.Errorf("get Triggers: %w", err)
 	}
 	var triggers []string
 	if err := v.Store(&triggers); err != nil {
@@ -274,7 +274,7 @@ func (m *Manager) uintProperty(name string, dst *uint64) error {
 func (m *Manager) uintPropertyOn(obj dbus.BusObject, iface, name string, dst *uint64) error {
 	var v dbus.Variant
 	if err := obj.Call(propsIface+".Get", 0, iface, name).Store(&v); err != nil {
-		return fmt.Errorf("Get %s.%s: %w", iface, name, err)
+		return fmt.Errorf("get %s.%s: %w", iface, name, err)
 	}
 	if err := v.Store(dst); err != nil {
 		return fmt.Errorf("decode %s.%s variant: %w", iface, name, err)
