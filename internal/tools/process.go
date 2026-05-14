@@ -61,7 +61,7 @@ func registerProcess(s *mcp.Server, d Deps) {
 			nameRE = re
 		}
 		if in.State != "" {
-			if len(in.State) != 1 || !strings.Contains("RSDZTI", strings.ToUpper(in.State)) {
+			if len(in.State) != 1 || !strings.ContainsAny(strings.ToUpper(in.State), "RSDZTI") {
 				return nil, listProcessesOut{}, fmt.Errorf("invalid state %q (expected one of R/S/D/Z/T/I)", in.State)
 			}
 		}

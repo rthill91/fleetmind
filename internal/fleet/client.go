@@ -53,7 +53,7 @@ func (c *Client) Join(ctx context.Context, baseURL string, self Peer) ([]Peer, e
 	if err != nil {
 		return nil, fmt.Errorf("post join %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("join %s: status %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(snippet)))
@@ -87,7 +87,7 @@ func (c *Client) StreamEvents(ctx context.Context, baseURL string, onEvent func(
 	if err != nil {
 		return fmt.Errorf("get events %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("events %s: status %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(snippet)))

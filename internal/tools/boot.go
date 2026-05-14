@@ -68,7 +68,7 @@ func registerBoot(s *mcp.Server, _ Deps) {
 		if err != nil {
 			return nil, bootTimeOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		defer m.Close()
+		defer func() { _ = m.Close() }()
 		bt, err := m.BootTimes()
 		if err != nil {
 			return nil, bootTimeOut{}, fmt.Errorf("read boot times: %w", err)
@@ -103,7 +103,7 @@ func registerBoot(s *mcp.Server, _ Deps) {
 		if err != nil {
 			return nil, bootBlameOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		defer m.Close()
+		defer func() { _ = m.Close() }()
 		units, err := m.ListUnits()
 		if err != nil {
 			return nil, bootBlameOut{}, err
@@ -140,7 +140,7 @@ func registerBoot(s *mcp.Server, _ Deps) {
 		if err != nil {
 			return nil, bootCriticalChainOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		defer m.Close()
+		defer func() { _ = m.Close() }()
 		target, err := m.DefaultTarget()
 		if err != nil {
 			return nil, bootCriticalChainOut{}, err

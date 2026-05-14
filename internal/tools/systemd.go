@@ -105,7 +105,7 @@ func registerSystemd(s *mcp.Server, d Deps) {
 		if err != nil {
 			return nil, listUnitsOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		defer m.Close()
+		defer func() { _ = m.Close() }()
 		raw, err := m.ListUnits()
 		if err != nil {
 			return nil, listUnitsOut{}, err
@@ -155,7 +155,7 @@ func registerSystemd(s *mcp.Server, d Deps) {
 		if err != nil {
 			return nil, unitStatusOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		defer m.Close()
+		defer func() { _ = m.Close() }()
 		path, err := m.LoadUnit(in.Unit)
 		if err != nil {
 			return nil, unitStatusOut{}, err
@@ -192,7 +192,7 @@ func registerSystemd(s *mcp.Server, d Deps) {
 		if err != nil {
 			return nil, listTimersOut{}, fmt.Errorf("open systemd bus: %w", err)
 		}
-		defer m.Close()
+		defer func() { _ = m.Close() }()
 		raw, err := m.ListUnits()
 		if err != nil {
 			return nil, listTimersOut{}, err

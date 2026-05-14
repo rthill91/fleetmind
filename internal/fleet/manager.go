@@ -228,7 +228,10 @@ func (m *Manager) ensureStream(parent context.Context, peer Peer) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	m.streams[peer.NodeID] = cancel
-	go m.runStream(ctx, peer)
+	go func() {
+		defer cancel()
+		m.runStream(ctx, peer)
+	}()
 }
 
 func (m *Manager) cancelStream(nodeID string) {
